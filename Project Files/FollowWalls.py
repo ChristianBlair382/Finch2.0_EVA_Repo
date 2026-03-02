@@ -1,4 +1,5 @@
 from RoomFinch import RoomFinch
+from room_map import Room_Map
 
 # Currently assumes right angle turns in the room, so pathing will be very square, can change in the future.
 def follow_walls(finch: RoomFinch):
