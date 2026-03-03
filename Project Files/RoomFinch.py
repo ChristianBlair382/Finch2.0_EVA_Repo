@@ -9,7 +9,7 @@ class RoomFinch:
     RETURN_TOLERANCE = 15       # distance tolerance for deciding if the finch has returned to origin
     MIN_STEPS_BEFORE_CYCLE = 20 # avoid false origin detection at the start
 
-    def __init__(self, device='A', maxLinearSpeed=50, maxRotationSpeed=50):
+    def __init__(self, device='A', maxLinearSpeed=100, maxRotationSpeed=75):
         self._finch = BirdBrainFinch(device)
         self.maxLinearSpeed = maxLinearSpeed
         self.maxRotationSpeed = maxRotationSpeed
@@ -21,6 +21,9 @@ class RoomFinch:
         # Heading direction in degrees. 0 = initial forward direction.
         # Positive = counter-clockwise as left turn adds and right turn subtracts
         self.heading = 0.0
+
+        self.light_readings = []          # Stores all recorded light sensor readings
+        self.temperature_readings = []    # Stores all recorded temperature readings
         
     def moveForward(self, distance=None):
         """Move forward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed. 
@@ -54,6 +57,24 @@ class RoomFinch:
         dist = self._finch.getDistance()
         self._finch.setTurn('L', 90, self.maxRotationSpeed)
         return dist
+
+    def recordSensors(self):
+        light = self._finch.getLight()        # Get current light sensor reading
+        temp = self._finch.getTemperature()   # Get current temperature reading
+
+        self.light_readings.append(light)        # Add light reading to list
+        self.temperature_readings.append(temp)   # Add temperature reading to list
+
+    def getAverageTemperature(self):
+        if len(self.temperature_readings) == 0:
+            return 0
+        return sum(self.temperature_readings) / len(self.temperature_readings)  # Compute average temperature
+
+    def getAverageLight(self):
+        if len(self.light_readings) == 0:
+            return 0
+        return sum(self.light_readings) / len(self.light_readings)  # Compute average light level
+
 
     def distanceFromOrigin(self):
         """Distance from (0, 0)."""
