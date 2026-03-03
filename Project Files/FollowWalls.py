@@ -8,6 +8,8 @@ def follow_walls(finch: RoomFinch):
     print("Approaching first wall...")
     while finch.scanObstacle() > finch.FRONT_WALL_DIST:
         finch.moveForward()
+        finch.recordSensors()  # Record light and temperature while approaching first wall
+
 
     # Turn left so the wall is to the right
     finch.turnLeft(90)
@@ -26,6 +28,8 @@ def follow_walls(finch: RoomFinch):
 
         else:
             finch.moveForward()
+            finch.recordSensors()  # Record sensors after each forward movement
+
             # Checks right side 
             side = finch.checkRight()
 
@@ -35,8 +39,10 @@ def follow_walls(finch: RoomFinch):
             else:
                 # Wall is gone, so turn right and go forward
                 print(f"  Steps: {step_count}: outward corner — turning right  {finch.getPosition()}")
+                finch.moveForward(20)
+                finch.recordSensors()  # Record sensors after extra outward corner movement
                 finch.turnRight(90)
-                finch.moveForward()
+                
 
         # End of cycle, checks if finch is back at origin
         if finch.hasReturnedToOrigin(step_count):
@@ -45,6 +51,10 @@ def follow_walls(finch: RoomFinch):
 
     finch.stop()
     finch.stopAll()
+
+    print("\nRoom Data Summary")
+    print(f"Average Temperature: {round(finch.getAverageTemperature(), 2)} °C")  # Display average temperature
+    print(f"Average Light Level: {round(finch.getAverageLight(), 2)}")           # Display average light level
 
 
 if __name__ == "__main__":
