@@ -1,21 +1,56 @@
 from RoomFinch import RoomFinch
 
+def manual_override(finch: RoomFinch):
+    """Manual control of the Finch using letters. Q to quit manual mode."""
+    print("\n--- MANUAL OVERRIDE MODE ---")
+    print("F = Forward | B = Backward | L = Turn Left | R = Turn Right | Q = Exit\n")
+
+    while True:
+        choice = input("Enter command: ").strip().upper()
+        if choice == "F":
+            finch._finch.setMove('F', 10, finch.maxLinearSpeed)  # Move forward 10 cm
+        elif choice == "B":
+            finch._finch.setMove('B', 10, finch.maxLinearSpeed)  # Move backward 10 cm
+        elif choice == "L":
+            finch._finch.setTurn('L', 15, finch.maxRotationSpeed)  # Turn left 15 deg
+        elif choice == "R":
+            finch._finch.setTurn('R', 15, finch.maxRotationSpeed)  # Turn right 15 deg
+        elif choice == "Q":
+            finch.stopAll()
+            print("\nExiting manual override mode.\n")
+            break
+        else:
+            print("Invalid command, try again.")
+
 # Currently assumes right angle turns in the room, so pathing will be very square, can change in the future.
 def follow_walls(finch: RoomFinch):
     """Drives the finch to hug the right wall around the room, and stops once it returns to the origin"""
 
+    finch.setBeakColor(0, 0, 255)  # Set beak LED to blue (starting state)
+    # Ask user to choose mode
+    print("Select mode:")
+    print("A = Automatic (start mapping)")
+    print("M = Manual override")
+
+    choice = input("Enter A or M: ").strip().upper()
+    if choice == "M":
+        manual_override(finch)  # enter manual mode
+        return
+    
     # Drive up to the first wall to begin loop
     print("Approaching first wall...")
     while finch.scanObstacle() > finch.FRONT_WALL_DIST:
+        finch.playBeep(60, 1)
         finch.moveForward()
         finch.recordSensors()  # Record light and temperature while approaching first wall
-
-
+    
     # Turn left so the wall is to the right
     finch.turnLeft(90)
 
     step_count = 0
     print("Starting to follow wall")
+    finch.setBeakColor(255, 255, 0)  # Change beak LED to yellow (actively mapping)
+
 
     while True:
         front = finch.scanObstacle()
@@ -23,6 +58,7 @@ def follow_walls(finch: RoomFinch):
 
         # Inside Corner Case: Turn left if wall ahead
         if front < finch.FRONT_WALL_DIST:
+            finch.playBeep(40, 150)  # Low beep when obstacle ahead
             print(f"  Steps: {step_count}: wall ahead — turning left  {finch.getPosition()}")
             finch.turnLeft(90)
 
@@ -37,6 +73,7 @@ def follow_walls(finch: RoomFinch):
                 # Wall is still on the right, so do nothing
                 print(f"  Steps: {step_count}: wall on right — straight  {finch.getPosition()}")
             else:
+                finch.playBeep(80, 150)  # Higher beep for outward corner
                 # Wall is gone, so turn right and go forward
                 print(f"  Steps: {step_count}: outward corner — turning right  {finch.getPosition()}")
                 finch.moveForward(20)
@@ -51,7 +88,18 @@ def follow_walls(finch: RoomFinch):
 
     finch.stop()
     finch.stopAll()
+    finch.setBeakColor(0, 255, 0)  # Green beak LED to indicate completion
+    finch.playSuccessSound()  # Play success melody
 
+    smile = [
+        [0, 1, 0, 1, 0],
+        [0, 1, 0, 1, 0],
+        [0, 0, 0, 0, 0],
+        [1, 0, 0, 0, 1],
+        [0, 1, 1, 1, 0]
+    ]
+        
+    finch.displaySymbol(smile)  # Display smile face on 5x5 LED matrix
     print("\nRoom Data Summary")
     print(f"Average Temperature: {round(finch.getAverageTemperature(), 2)} °C")  # Display average temperature
     print(f"Average Light Level: {round(finch.getAverageLight(), 2)}")           # Display average light level
