@@ -27,8 +27,10 @@ class RoomFinch:
         self.light_readings = []          # Stores all recorded light sensor readings
         self.temperature_readings = []    # Stores all recorded temperature readings
         self.turn_scale = 1.0             # Scale factor for turns to account for carpet, updated if calibrating carpet
-        self.scanning = False             # Flag for whether the finch is currently in a moveForwardUntil command and should be scanning for obstacles
-        self.isStoppedByScan = False      # Flag to indicate if the finch was stopped by an obstacle during moveForwardUntil
+
+        self._hw_lock = threading.Lock()  # Lock for hardware access
+        self._stop_event = threading.Event()    # Event to signal threads to stop
+        self._scanning_event = threading.Event() # Event to signal when scanning is active
 
     def moveForward(self, distance=None):
         """Move forward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed. 
@@ -36,7 +38,8 @@ class RoomFinch:
         if distance is None:
             distance = self.MOVE_STEP
 
-        self._finch.setMove('F', distance, self.maxLinearSpeed)
+        with self._hw_lock:  # Ensure that hardware access is thread-safe
+            self._finch.setMove('F', distance, self.maxLinearSpeed)
 
         rad = math.radians(self.heading)
         self.x_position += distance * math.cos(rad)
@@ -47,44 +50,47 @@ class RoomFinch:
         step_distance = 1  # Move in smaller increments to allow for more frequent updates
         steps = int(distance / step_distance)
         for _ in range(steps):
-            if self.isStoppedByScan:
+            if self._stop_event.is_set():  # Check if stop signal is set by scan thread
                 break
             self.moveForward(step_distance)
-            front_distance = self.scanObstacle()
-        self.scanning = False  # Stop scanning thread after movement is complete
+        self._scanning_event.clear()  # Clear scanning event after movement is done
 
     def threadScan(self, distance_from_wall):
         """Thread function to continuously scan for obstacles and update finch location."""
-        while True:
+        while self._scanning_event.is_set():
             front_distance = self.scanObstacle()
-            if front_distance < self.FRONT_WALL_DIST:
+            if front_distance < distance_from_wall:
                 # If obstacle detected, stop movement and update position based on last move
-                self.stop()
-                self.scanning = False
-                self.isStoppedByScan = True
-            if not self.scanning:
-                self.isStoppedByScan = False  # Reset for next move command
-                break
+                self._stop_event.set()  # Signal to stop movement
+                with self._hw_lock:
+                    self._finch.stop()  # Stop the finch immediately
+                return
 
     def moveForwardUntil(self, distance=None, distance_from_wall=20):
-        """Move forward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed.
-        But stops if an obstacle is detected within distance_from_wall cm in front. Then updates approximate coordinate"""
+        """Move forward by distance cms, but stops early if an obstacle is detected in range"""
         if distance is None:
             distance = self.MOVE_STEP
-        self.scanning = True
-        self.isStoppedByScan = False # Reset before starting movement
-        self.forwardSteps(distance)
+        self._stop_event.clear()  # Clear any previous stop signal
+        self._scanning_event.set()  # Signal that scanning should be active
+
         scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
+        step_thread = threading.Thread(target=self.forwardSteps, args=(distance,))
         scan_thread.start()
-        return self.isStoppedByScan  # Returns true if stopped by obstacle, false if stopped by distance traveled
+        step_thread.start()
+        scan_thread.join()
+        step_thread.join()
+        return self._stop_event.is_set()  # Returns true if stopped by obstacle, false if stopped by distance traveled
 
     def moveForwardUntilWall(self, distance_from_wall=20):
         """Move forward until an obstacle is detected within distance_from_wall cm in front. Then updates approximate coordinate"""
-        self.scanning = True
+        self._stop_event.clear()
+        self._scanning_event.set()
         scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
         scan_thread.start()
-        while self.scanning:
+        while self._scanning_event.is_set():
             self.moveForward(1)  # Move in increments to allow for scanning
+        self._scanning_event.clear()
+        scan_thread.join()
 
 
     def moveBackward(self, distance=None):
@@ -111,13 +117,22 @@ class RoomFinch:
 
     def scanObstacle(self):
         """Returns front distance sensor reading in cm."""
-        return self._finch.getDistance()
+        with self._hw_lock:  # Ensure that hardware access is thread-safe
+            return self._finch.getDistance()
 
     def checkRight(self):
         """Turns 90 degrees right to check if there is an obstacle there, then turns back. Used for hugging right wall"""
         self.turnRight(90)
         dist = self._finch.getDistance()
+        #TODO: Forward wall position recording if dist < threshold
         self.turnLeft(90)
+        return dist
+
+    def checkLeft(self):
+        """Turns 90 degrees left to check if there is an obstacle there, then turns back."""
+        self.turnLeft(90)
+        dist = self._finch.getDistance()
+        self.turnRight(90)
         return dist
 
     def recordSensors(self):
@@ -182,35 +197,45 @@ class RoomFinch:
         initial_distance = self.scanObstacle()
         check_distance = 0
         turn_num = 0
-        while (check_distance != initial_distance) and (turn_num < 10):
+        start_tolerance  = 10  # Prevents early trigger of calibration
+        max_turns = 100
+        while (check_distance != initial_distance) or (turn_num < start_tolerance):
             self.turnLeft(10)
             check_distance = self.scanObstacle()
             turn_num += 1
-            if turn_num >= 100:
+            if turn_num >= max_turns:
                 print("Calibration failed: couldn't find matching distance after 100 turns, turn scale unchanged.")
                 return
         self.turn_scale = turn_num / 36
         print(f"Calibration complete. turn_scale set to {self.turn_scale}")
         
-    def manual_override(self):
+    def manualOverride(self):
         """Manual control of the Finch using letters. Q to quit manual mode."""
         print("\n--- MANUAL OVERRIDE MODE ---")
         print("W = Forward | S = Backward | A = Turn Left | D = Turn Right | Q = Exit\n")
 
         while True:
-            print(keyboard.read_key())
-            if keyboard.read_key() == "a":
+            key = keyboard.read_key()
+            if key == "a":
                 self.turnLeft(1)
-            elif keyboard.read_key() == "d":
+            elif key == "d":
                 self.turnRight(1)
-            elif keyboard.read_key() == "w":
+            elif key == "w":
                 self.moveForward(1)
-            elif keyboard.read_key() == "s":
+            elif key == "s":
                 self.moveBackward(1)
-            elif keyboard.read_key() == "q":
+            elif key == "q":
                 print("\nExiting manual override mode.\n")
                 self.stop()
                 break
+
+    def returnWallPosition(self, distance):
+        """Returns the (x, y) position of a wall in front of the finch based on current position and heading.
+        Returns Float values rounded to 1 decimal place."""
+        rad = math.radians(self.heading)
+        wall_x = self.x_position + distance * math.cos(rad)
+        wall_y = self.y_position + distance * math.sin(rad)
+        return (round(wall_x, 1), round(wall_y, 1))
 
     def stop(self):
         self._finch.stop()
