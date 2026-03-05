@@ -130,8 +130,8 @@ class RoomFinch:
 
     def scanObstacle(self):
         """Returns front distance sensor reading in cm."""
-        with self._hw_lock:  # Ensure that hardware access is thread-safe
-            return self._finch.getDistance()
+        #with self._hw_lock:  # Ensure that hardware access is thread-safe
+        return self._finch.getDistance()
 
     def checkRight(self):
         """Turns 90 degrees right to check if there is an obstacle there, then turns back. Used for hugging right wall"""
