@@ -73,25 +73,40 @@ class RoomFinch:
             distance = self.MOVE_STEP
         self._stop_event.clear()  # Clear any previous stop signal
         self._scanning_event.set()  # Signal that scanning should be active
+        for i in range(distance):
+            self.moveForward(1)
+            if self.scanObstacle() < distance_from_wall:
+                self._stop_event.set()  # Signal to stop movement
+                with self._hw_lock:
+                    self._finch.stop()  # Stop the finch immediately
+                break
 
-        scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
-        step_thread = threading.Thread(target=self.forwardSteps, args=(distance,))
-        scan_thread.start()
-        step_thread.start()
-        scan_thread.join()
-        step_thread.join()
+        #scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
+        #step_thread = threading.Thread(target=self.forwardSteps, args=(distance,))
+        #scan_thread.start()
+        #step_thread.start()
+        #scan_thread.join()
+        #step_thread.join()
         return self._stop_event.is_set()  # Returns true if stopped by obstacle, false if stopped by distance traveled
 
     def moveForwardUntilWall(self, distance_from_wall=20):
         """Move forward until an obstacle is detected within distance_from_wall cm in front. Then updates approximate coordinate"""
         self._stop_event.clear()
         self._scanning_event.set()
-        scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
-        scan_thread.start()
-        while self._scanning_event.is_set():
-            self.moveForward(1)  # Move in increments to allow for scanning
-        self._scanning_event.clear()
-        scan_thread.join()
+        while True:
+            self.moveForward(1)
+            front_distance = self.scanObstacle()
+            if front_distance < distance_from_wall:
+                self._stop_event.set()
+                with self._hw_lock:
+                    self._finch.stop()
+                break
+        #scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
+        #scan_thread.start()
+        #while self._scanning_event.is_set():
+        #    self.moveForward(1)  # Move in increments to allow for scanning
+        #self._scanning_event.clear()
+        #scan_thread.join()
 
 
     def moveBackward(self, distance=None):
