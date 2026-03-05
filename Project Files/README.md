@@ -1,7 +1,9 @@
-Python Library for Hummingbird Bit and Finch 2
+Room Navigating Finch Project
+Written: William Chen, Christian Blair, Armaan Yazdani
 
-Written : RaghunathReddy and Bambi Brewer
+The finch navigates along the walls of the room and marks their positions based on an estimated coordinates system.
+Accounts for inaccuracies from running on carpet.
 
-Our Python library allows students to use Python to read sensors and set motors and LEDs with the Hummingbird Bit. To use Python with the Hummingbird Bit, you must connect to the Hummingbird Bit via bluetooth with the BlueBird Connector. 
+Uses multithreading to ensure smooth movement of the finch while scanning.
 
-For more information, see www.birdbraintechnologies.com/hummingbirdbit/python/
+Minimizes the amount of turns required to optimise accuracy, as every turn on carpet leads to additional inaccuracy.
