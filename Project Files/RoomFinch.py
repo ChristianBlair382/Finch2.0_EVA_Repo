@@ -255,6 +255,10 @@ class RoomFinch:
         wall_x = self.x_position + distance * math.cos(rad)
         wall_y = self.y_position + distance * math.sin(rad)
         return (round(wall_x, 1), round(wall_y, 1))
+    
+    def setTurnScale(self, scale):
+        """Sets the turn scale factor, used for calibrating turns on different floor surfaces."""
+        self.turn_scale = scale
 
     def stop(self):
         self._finch.stop()
