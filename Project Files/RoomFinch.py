@@ -59,11 +59,15 @@ class RoomFinch:
         return dist
 
     def recordSensors(self):
-        light = self._finch.getLight()        # Get current light sensor reading
-        temp = self._finch.getTemperature()   # Get current temperature reading
+        left_light = self._finch.getLight("left") # Left light sensor (0–100)
+        right_light = self._finch.getLight("right") # Right light sensor (0–100)
 
-        self.light_readings.append(light)        # Add light reading to list
-        self.temperature_readings.append(temp)   # Add temperature reading to list
+        avg_light = (left_light + right_light) / 2 # Average the two sensors
+
+        temp = self._finch.getTemperature() # Temperature in °C
+
+        self.light_readings.append(avg_light) # Store averaged light
+        self.temperature_readings.append(temp) # Store temperature
 
     def getAverageTemperature(self):
         if len(self.temperature_readings) == 0:
@@ -75,7 +79,26 @@ class RoomFinch:
             return 0
         return sum(self.light_readings) / len(self.light_readings)  # Compute average light level
 
+    def playBeep(self, note=60, duration=100):
+        self._finch.playNote(note, duration)  # Plays note number (0–100) for duration in ms
 
+    def playSuccessSound(self):
+        self._finch.playNote(60, 200)  # C note (Middle)
+        self._finch.playNote(70, 200)  # E note (Higher)
+        self._finch.playNote(80, 300)  # G note (Highest)
+
+    def setBeakColor(self, r, g, b):
+        self._finch.setBeak(r, g, b)  # Sets RGB beak LED color (0–255 for each color)
+
+    def clearBeak(self):
+        self._finch.setBeak(0, 0, 0)  # Turns off beak LED
+
+    def displaySymbol(self, symbol_matrix):
+        self._finch.setDisplay(symbol_matrix)  # Displays a 5x5 LED pattern on micro:bit
+
+    def clearDisplay(self):
+        self._finch.setDisplay([[0]*5 for _ in range(5)])  # Turns off all LEDs on 5x5 display
+    
     def distanceFromOrigin(self):
         """Distance from (0, 0)."""
         return math.sqrt(self.x_position ** 2 + self.y_position ** 2)
