@@ -39,8 +39,8 @@ class RoomFinch:
         if distance is None:
             distance = self.MOVE_STEP
 
-        with self._hw_lock:  # Ensure that hardware access is thread-safe
-            self._finch.setMove('F', distance, self.maxLinearSpeed)
+        #with self._hw_lock:  # Ensure that hardware access is thread-safe
+        self._finch.setMove('F', distance, self.maxLinearSpeed)
 
         rad = math.radians(self.heading)
         self.x_position += distance * math.cos(rad)
@@ -63,8 +63,7 @@ class RoomFinch:
             if front_distance < distance_from_wall:
                 # If obstacle detected, stop movement and update position based on last move
                 self._stop_event.set()  # Signal to stop movement
-                with self._hw_lock:
-                    self._finch.stop()  # Stop the finch immediately
+                self._finch.stop()  # Stop the finch immediately
                 return
 
     def moveForwardUntil(self, distance=None, distance_from_wall=20):
@@ -77,8 +76,7 @@ class RoomFinch:
             self.moveForward(1)
             if self.scanObstacle() < distance_from_wall:
                 self._stop_event.set()  # Signal to stop movement
-                with self._hw_lock:
-                    self._finch.stop()  # Stop the finch immediately
+                self._finch.stop()  # Stop the finch immediately
                 break
 
         #scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
@@ -98,8 +96,7 @@ class RoomFinch:
             front_distance = self.scanObstacle()
             if front_distance < distance_from_wall:
                 self._stop_event.set()
-                with self._hw_lock:
-                    self._finch.stop()
+                self._finch.stop()
                 break
         #scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
         #scan_thread.start()
