@@ -75,7 +75,7 @@ class RoomFinch:
         for i in range(distance):
             self.moveForward(1)
             if self.scanObstacle() < distance_from_wall:
-                self.playBeep(40, 150)  # Low beep when obstacle ahead
+                self.playBeep(40, 1)  # Low beep when obstacle ahead
                 self._stop_event.set()  # Signal to stop movement
                 self._finch.stop()  # Stop the finch immediately
                 break
@@ -96,7 +96,7 @@ class RoomFinch:
             self.moveForward(1)
             front_distance = self.scanObstacle()
             if front_distance < distance_from_wall:
-                self.playBeep(40, 150)  # Low beep when obstacle ahead
+                self.playBeep(40, 1)  # Low beep when obstacle ahead
                 self._stop_event.set()
                 self._finch.stop()
                 break
@@ -169,9 +169,9 @@ class RoomFinch:
             return 0
         return sum(self.light_readings) / len(self.light_readings)  # Compute average light level
 
-    def playBeep(self, note=60, duration=100):
+    def playBeep(self, note=60, duration=1):
         """Plays a beep sound with the given note and duration."""
-        self._finch.playNote(note, duration)  # Plays note number (0–100) for duration in ms
+        self._finch.playNote(note, duration)  # Plays note number (0–100) for duration in seconds up to 16
 
     def playSuccessSound(self):
         """Plays a success melody."""

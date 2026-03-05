@@ -33,6 +33,7 @@ def navigateRoom(finch: RoomFinch):
     STEP_THRESHOLD = 6    # Minimum steps before allowing return to start condition
     steps = 0
     global overrideFlag
+    finch.setBeakColor(0, 0, 255)  # Set beak LED to blue (starting state)
     # Finch approaches first wall
     print("Approaching first wall...")
     finch.playBeep(60, 50)  # Play beep to indicate start
