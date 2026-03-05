@@ -27,7 +27,8 @@ class RoomFinch:
         self.light_readings = []          # Stores all recorded light sensor readings
         self.temperature_readings = []    # Stores all recorded temperature readings
         self.turn_scale = 1.0             # Scale factor for turns to account for carpet, updated if calibrating carpet
-        self.scanning = False
+        self.scanning = False             # Flag for whether the finch is currently in a moveForwardUntil command and should be scanning for obstacles
+        self.isStoppedByScan = False      # Flag to indicate if the finch was stopped by an obstacle during moveForwardUntil
 
     def moveForward(self, distance=None):
         """Move forward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed. 
@@ -41,11 +42,13 @@ class RoomFinch:
         self.x_position += distance * math.cos(rad)
         self.y_position += distance * math.sin(rad)
 
-    def threadForwardSteps(self, distance):
-        """Thread function to move forward and continuously update finch location until an obstacle is detected."""
+    def forwardSteps(self, distance):
+        """Main thread function to move forward and continuously update finch location until an obstacle is detected."""
         step_distance = 1  # Move in smaller increments to allow for more frequent updates
         steps = int(distance / step_distance)
         for _ in range(steps):
+            if self.isStoppedByScan:
+                break
             self.moveForward(step_distance)
             front_distance = self.scanObstacle()
         self.scanning = False  # Stop scanning thread after movement is complete
@@ -58,9 +61,9 @@ class RoomFinch:
                 # If obstacle detected, stop movement and update position based on last move
                 self.stop()
                 self.scanning = False
-                # Position is updated in moveForward, so we can just break here
-                break
+                self.isStoppedByScan = True
             if not self.scanning:
+                self.isStoppedByScan = False  # Reset for next move command
                 break
 
     def moveForwardUntil(self, distance=None, distance_from_wall=20):
@@ -69,10 +72,19 @@ class RoomFinch:
         if distance is None:
             distance = self.MOVE_STEP
         self.scanning = True
-        forward_thread  = threading.Thread(target=self.threadForwardSteps, args=(distance,))
+        self.isStoppedByScan = False # Reset before starting movement
+        self.forwardSteps(distance)
         scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
-        forward_thread.start()
         scan_thread.start()
+        return self.isStoppedByScan  # Returns true if stopped by obstacle, false if stopped by distance traveled
+
+    def moveForwardUntilWall(self, distance_from_wall=20):
+        """Move forward until an obstacle is detected within distance_from_wall cm in front. Then updates approximate coordinate"""
+        self.scanning = True
+        scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
+        scan_thread.start()
+        while self.scanning:
+            self.moveForward(1)  # Move in increments to allow for scanning
 
 
     def moveBackward(self, distance=None):
