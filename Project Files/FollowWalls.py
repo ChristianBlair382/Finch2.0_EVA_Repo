@@ -9,13 +9,13 @@ def manual_override(finch: RoomFinch):
     while True:
         choice = input("Enter command: ").strip().upper()
         if choice == "F":
-            finch._finch.setMove('F', 10, finch.maxLinearSpeed)  # Move forward 10 cm
+            finch.moveForward(10)  # Move forward 10 cm
         elif choice == "B":
-            finch._finch.setMove('B', 10, finch.maxLinearSpeed)  # Move backward 10 cm
+            finch.moveBackward(10)  # Move backward 10 cm
         elif choice == "L":
-            finch._finch.setTurn('L', 15, finch.maxRotationSpeed)  # Turn left 15 deg
+            finch.turnLeft(15) # Turn left 15 degrees
         elif choice == "R":
-            finch._finch.setTurn('R', 15, finch.maxRotationSpeed)  # Turn right 15 deg
+            finch.turnRight(15) # Turn right 15 degrees
         elif choice == "Q":
             finch.stopAll()
             print("\nExiting manual override mode.\n")
