@@ -16,7 +16,7 @@ def searchForCorner(finch: RoomFinch):
     return finch.returnWallPosition(closest_points[0]), finch.returnWallPosition(closest_points[1])  # Return position of closest point
 
 overrideFlag = False
-#
+#This will be replaced by frontend socketio in the future
 #def checkForOverride():
 #    """Checks for user input to override navigation and enter manual mode"""
 #    global overrideFlag
@@ -24,7 +24,6 @@ overrideFlag = False
 #    print("Manual override activated, entering manual mode")
 #    overrideFlag = True
 
-# TODO: Finch sensor readings need to be recorded
 def navigateRoom(finch: RoomFinch):
     """Navigates the room, minimizing turns"""
     SIDE_WALL_DIST = 150  # Distance threshold to consider the side an outside corner
