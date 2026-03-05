@@ -24,6 +24,7 @@ class RoomFinch:
 
         self.light_readings = []          # Stores all recorded light sensor readings
         self.temperature_readings = []    # Stores all recorded temperature readings
+        self.turn_scale = 1.0             # Scale factor for turns to account for carpet, updated if calibrating carpet
         
     def moveForward(self, distance=None):
         """Move forward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed. 
@@ -37,14 +38,26 @@ class RoomFinch:
         self.x_position += distance * math.cos(rad)
         self.y_position += distance * math.sin(rad)
 
+    def moveBackward(self, distance=None):
+        """Move backward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed. 
+        Then updates approximate coordinate"""
+        if distance is None:
+            distance = self.MOVE_STEP
+
+        self._finch.setMove('B', distance, self.maxLinearSpeed)
+
+        rad = math.radians(self.heading)
+        self.x_position -= distance * math.cos(rad)
+        self.y_position -= distance * math.sin(rad)
+
     def turnLeft(self, angle=90):
         """Turn left and update heading."""
-        self._finch.setTurn('L', angle, self.maxRotationSpeed)
+        self._finch.setTurn('L', angle * self.turn_scale, self.maxRotationSpeed)
         self.heading = (self.heading + angle) % 360
 
     def turnRight(self, angle=90):
         """Turn right and update heading."""
-        self._finch.setTurn('R', angle, self.maxRotationSpeed)
+        self._finch.setTurn('R', angle * self.turn_scale, self.maxRotationSpeed)
         self.heading = (self.heading - angle) % 360
 
     def scanObstacle(self):
@@ -53,9 +66,9 @@ class RoomFinch:
 
     def checkRight(self):
         """Turns 90 degrees right to check if there is an obstacle there, then turns back. Used for hugging right wall"""
-        self._finch.setTurn('R', 90, self.maxRotationSpeed)
+        self.turnRight(90)
         dist = self._finch.getDistance()
-        self._finch.setTurn('L', 90, self.maxRotationSpeed)
+        self.turnLeft(90)
         return dist
 
     def recordSensors(self):
@@ -110,10 +123,47 @@ class RoomFinch:
         return self.distanceFromOrigin() < self.RETURN_TOLERANCE
 
     def getPosition(self):
-        """Return current (x, y, heading). (For Debugging)"""
+        """Return current (x, y, heading), rounded to 1 decimal place"""
         return (round(self.x_position, 1),
                 round(self.y_position, 1),
                 round(self.heading, 1))
+
+    def calibrateFloor(self):
+        """Turns until it detects the same distance in front as initial reading, and sets turn_scale accordingly."""
+        initial_distance = self.scanObstacle()
+        check_distance = 0
+        turn_num = 0
+        while (check_distance != initial_distance) and (turn_num < 10):
+            self.turnLeft(10)
+            check_distance = self.scanObstacle()
+            turn_num += 1
+            if turn_num >= 100:
+                print("Calibration failed: couldn't find matching distance after 100 turns, turn scale unchanged.")
+                return
+        self.turn_scale = turn_num / 36
+        print(f"Calibration complete. turn_scale set to {self.turn_scale}")
+        
+    def manual_override(self):
+        """Manual control of the Finch using letters. Q to quit manual mode."""
+        print("\n--- MANUAL OVERRIDE MODE ---")
+        print("F = Forward | B = Backward | L = Turn Left | R = Turn Right | Q = Exit\n")
+
+        while True:
+            choice = input("Enter command: ").strip().upper()
+            if choice == "F":
+                self.moveForward(10)  # Move forward 10 cm
+            elif choice == "B":
+                self.moveBackward(10)  # Move backward 10 cm
+            elif choice == "L":
+                self.turnLeft(15) # Turn left 15 degrees
+            elif choice == "R":
+                self.turnRight(15) # Turn right 15 degrees
+            elif choice == "Q":
+                self.stopAll()
+                print("\nExiting manual override mode.\n")
+                break
+            else:
+                print("Invalid command, try again.")
 
     def stop(self):
         self._finch.stop()
