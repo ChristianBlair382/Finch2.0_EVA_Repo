@@ -16,13 +16,13 @@ def searchForCorner(finch: RoomFinch):
     return finch.returnWallPosition(closest_points[0]), finch.returnWallPosition(closest_points[1])  # Return position of closest point
 
 overrideFlag = False
-
-def checkForOverride():
-    """Checks for user input to override navigation and enter manual mode"""
-    global overrideFlag
-    keyboard.wait("m")  # Wait until "m" is pressed
-    print("Manual override activated, entering manual mode")
-    overrideFlag = True
+#
+#def checkForOverride():
+#    """Checks for user input to override navigation and enter manual mode"""
+#    global overrideFlag
+#    keyboard.wait("m")  # Wait until "m" is pressed
+#    print("Manual override activated, entering manual mode")
+#    overrideFlag = True
 
 # TODO: Finch sensor readings need to be recorded
 def navigateRoom(finch: RoomFinch):
@@ -36,7 +36,7 @@ def navigateRoom(finch: RoomFinch):
     finch.setBeakColor(0, 0, 255)  # Set beak LED to blue (starting state)
     # Finch approaches first wall
     print("Approaching first wall...")
-    finch.playBeep(60, 50)  # Play beep to indicate start
+    finch.playBeep(60, 1)  # Play beep to indicate start
     finch.moveForwardUntilWall()
     # Turn left so the wall is to the right
     finch.turnLeft(90)
@@ -44,9 +44,9 @@ def navigateRoom(finch: RoomFinch):
     finch.setBeakColor(255, 255, 0)  # Change beak LED to yellow (actively mapping)
     #Record starting position
     start = finch.getPosition()
-    overrideThread = threading.Thread(target=checkForOverride)
-    overrideThread.daemon = True  # Daemonize thread to exit when main program exits
-    overrideThread.start()
+    #overrideThread = threading.Thread(target=checkForOverride)
+    #overrideThread.daemon = True  # Daemonize thread to exit when main program exits
+    #overrideThread.start()
     while not overrideFlag:
         steps += 1
         pos = finch.getPosition()
@@ -64,7 +64,7 @@ def navigateRoom(finch: RoomFinch):
 
         if finch.checkRight() > SIDE_WALL_DIST:
             #No wall on the right, so turn to search to find corner position
-            finch.playBeep(80, 150)  # Higher beep for outward corner
+            finch.playBeep(80, 1)  # Higher beep for outward corner
             print(f"Wall lost on the right at {finch.getPosition()}, finding wall positions")
             p1, p2 = searchForCorner(finch)
             #TODO: Calculate Coordinates
