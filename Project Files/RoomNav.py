@@ -27,6 +27,7 @@ def checkForOverride():
 # TODO: Finch sensor readings need to be recorded
 def navigateRoom(finch: RoomFinch):
     """Navigates the room, minimizing turns"""
+    SIDE_WALL_DIST = 150  # Distance threshold to consider the side an outside corner
     BIG_STEP = 60
     RETURN_THRESHOLD = 20  # Distance threshold to consider as returning to start
     STEP_THRESHOLD = 6    # Minimum steps before allowing return to start condition
@@ -58,7 +59,7 @@ def navigateRoom(finch: RoomFinch):
             finch.turnLeft(90)
             continue
 
-        if finch.checkRight() > finch.SIDE_CHECK_DIST:
+        if finch.checkRight() > SIDE_WALL_DIST:
             #No wall on the right, so turn to search to find corner position
             print(f"Wall lost on the right at {finch.getPosition()}, finding wall positions")
             p1, p2 = searchForCorner(finch)

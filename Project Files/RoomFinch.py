@@ -5,8 +5,9 @@ import threading
 
 # Most numbers are dummy numbers, change after testing, measurements are in cm
 class RoomFinch:
-    FRONT_WALL_DIST = 15        # threshold for distance sensor for deciding if there is a wall ahead
+    FRONT_WALL_DIST = 20        # threshold for distance sensor for deciding if there is a wall ahead
     SIDE_CHECK_DIST = 30        # threshold for deciding if there is a wall to the side when turning to check
+    SIDE_DIST_CRITICAL = 10     # threshold for deciding if the wall on the side is close enough for the finch to back away
     MOVE_STEP = 5               # distance per step
     RETURN_TOLERANCE = 15       # distance tolerance for deciding if the finch has returned to origin
     MIN_STEPS_BEFORE_CYCLE = 20 # avoid false origin detection at the start
@@ -124,15 +125,12 @@ class RoomFinch:
         """Turns 90 degrees right to check if there is an obstacle there, then turns back. Used for hugging right wall"""
         self.turnRight(90)
         dist = self._finch.getDistance()
+        if dist < self.SIDE_DIST_CRITICAL:
+            # If wall is too close on the right, back up a bit
+            print(f"Wall too close on the right at {self.getPosition()}, backing up")
+            self.moveBackward(10)
         #TODO: Forward wall position recording if dist < threshold
         self.turnLeft(90)
-        return dist
-
-    def checkLeft(self):
-        """Turns 90 degrees left to check if there is an obstacle there, then turns back."""
-        self.turnLeft(90)
-        dist = self._finch.getDistance()
-        self.turnRight(90)
         return dist
 
     def recordSensors(self):
