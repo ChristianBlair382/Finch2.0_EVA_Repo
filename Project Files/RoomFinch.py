@@ -1,5 +1,7 @@
 from BirdBrain import Finch as BirdBrainFinch
 import math
+import keyboard
+import threading
 
 # Most numbers are dummy numbers, change after testing, measurements are in cm
 class RoomFinch:
@@ -25,7 +27,8 @@ class RoomFinch:
         self.light_readings = []          # Stores all recorded light sensor readings
         self.temperature_readings = []    # Stores all recorded temperature readings
         self.turn_scale = 1.0             # Scale factor for turns to account for carpet, updated if calibrating carpet
-        
+        self.scanning = False
+
     def moveForward(self, distance=None):
         """Move forward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed. 
         Then updates approximate coordinate"""
@@ -37,6 +40,40 @@ class RoomFinch:
         rad = math.radians(self.heading)
         self.x_position += distance * math.cos(rad)
         self.y_position += distance * math.sin(rad)
+
+    def threadForwardSteps(self, distance):
+        """Thread function to move forward and continuously update finch location until an obstacle is detected."""
+        step_distance = 1  # Move in smaller increments to allow for more frequent updates
+        steps = int(distance / step_distance)
+        for _ in range(steps):
+            self.moveForward(step_distance)
+            front_distance = self.scanObstacle()
+        self.scanning = False  # Stop scanning thread after movement is complete
+
+    def threadScan(self, distance_from_wall):
+        """Thread function to continuously scan for obstacles and update finch location."""
+        while True:
+            front_distance = self.scanObstacle()
+            if front_distance < self.FRONT_WALL_DIST:
+                # If obstacle detected, stop movement and update position based on last move
+                self.stop()
+                self.scanning = False
+                # Position is updated in moveForward, so we can just break here
+                break
+            if not self.scanning:
+                break
+
+    def moveForwardUntil(self, distance=None, distance_from_wall=20):
+        """Move forward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed.
+        But stops if an obstacle is detected within distance_from_wall cm in front. Then updates approximate coordinate"""
+        if distance is None:
+            distance = self.MOVE_STEP
+        self.scanning = True
+        forward_thread  = threading.Thread(target=self.threadForwardSteps, args=(distance,))
+        scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
+        forward_thread.start()
+        scan_thread.start()
+
 
     def moveBackward(self, distance=None):
         """Move backward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed. 
@@ -146,24 +183,22 @@ class RoomFinch:
     def manual_override(self):
         """Manual control of the Finch using letters. Q to quit manual mode."""
         print("\n--- MANUAL OVERRIDE MODE ---")
-        print("F = Forward | B = Backward | L = Turn Left | R = Turn Right | Q = Exit\n")
+        print("W = Forward | S = Backward | A = Turn Left | D = Turn Right | Q = Exit\n")
 
         while True:
-            choice = input("Enter command: ").strip().upper()
-            if choice == "F":
-                self.moveForward(10)  # Move forward 10 cm
-            elif choice == "B":
-                self.moveBackward(10)  # Move backward 10 cm
-            elif choice == "L":
-                self.turnLeft(15) # Turn left 15 degrees
-            elif choice == "R":
-                self.turnRight(15) # Turn right 15 degrees
-            elif choice == "Q":
-                self.stopAll()
+            print(keyboard.read_key())
+            if keyboard.read_key() == "a":
+                self.turnLeft(1)
+            elif keyboard.read_key() == "d":
+                self.turnRight(1)
+            elif keyboard.read_key() == "w":
+                self.moveForward(1)
+            elif keyboard.read_key() == "s":
+                self.moveBackward(1)
+            elif keyboard.read_key() == "q":
                 print("\nExiting manual override mode.\n")
+                self.stop()
                 break
-            else:
-                print("Invalid command, try again.")
 
     def stop(self):
         self._finch.stop()
