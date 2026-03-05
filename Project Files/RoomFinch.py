@@ -38,7 +38,7 @@ class RoomFinch:
         Then updates approximate coordinate"""
         if distance is None:
             distance = self.MOVE_STEP
-
+        self.recordSensors()  # Record sensors before movement to capture conditions leading to movement
         #with self._hw_lock:  # Ensure that hardware access is thread-safe
         self._finch.setMove('F', distance, self.maxLinearSpeed)
 
@@ -75,6 +75,7 @@ class RoomFinch:
         for i in range(distance):
             self.moveForward(1)
             if self.scanObstacle() < distance_from_wall:
+                self.playBeep(40, 150)  # Low beep when obstacle ahead
                 self._stop_event.set()  # Signal to stop movement
                 self._finch.stop()  # Stop the finch immediately
                 break
@@ -95,6 +96,7 @@ class RoomFinch:
             self.moveForward(1)
             front_distance = self.scanObstacle()
             if front_distance < distance_from_wall:
+                self.playBeep(40, 150)  # Low beep when obstacle ahead
                 self._stop_event.set()
                 self._finch.stop()
                 break
@@ -146,6 +148,7 @@ class RoomFinch:
         return dist
 
     def recordSensors(self):
+        """Records the current light and temperature sensor readings and stores them in the respective lists."""
         left_light = self._finch.getLight("left") # Left light sensor (0–100)
         right_light = self._finch.getLight("right") # Right light sensor (0–100)
 
@@ -167,23 +170,29 @@ class RoomFinch:
         return sum(self.light_readings) / len(self.light_readings)  # Compute average light level
 
     def playBeep(self, note=60, duration=100):
+        """Plays a beep sound with the given note and duration."""
         self._finch.playNote(note, duration)  # Plays note number (0–100) for duration in ms
 
     def playSuccessSound(self):
+        """Plays a success melody."""
         self._finch.playNote(60, 200)  # C note (Middle)
         self._finch.playNote(70, 200)  # E note (Higher)
         self._finch.playNote(80, 300)  # G note (Highest)
 
     def setBeakColor(self, r, g, b):
+        """Sets the color of the Finch's beak LED."""
         self._finch.setBeak(r, g, b)  # Sets RGB beak LED color (0–255 for each color)
 
     def clearBeak(self):
+        """Turns off the beak LED."""
         self._finch.setBeak(0, 0, 0)  # Turns off beak LED
 
     def displaySymbol(self, symbol_matrix):
+        """Displays a symbol on the Finch's 5x5 LED matrix. Input is a 2D list of 0s and 1s."""
         self._finch.setDisplay(symbol_matrix)  # Displays a 5x5 LED pattern on micro:bit
 
     def clearDisplay(self):
+        """Turns off all LEDs on the Finch's 5x5 display."""
         self._finch.setDisplay([[0]*5 for _ in range(5)])  # Turns off all LEDs on 5x5 display
     
     def distanceFromOrigin(self):

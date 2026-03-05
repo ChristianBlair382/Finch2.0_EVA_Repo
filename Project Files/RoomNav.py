@@ -35,10 +35,12 @@ def navigateRoom(finch: RoomFinch):
     global overrideFlag
     # Finch approaches first wall
     print("Approaching first wall...")
+    finch.playBeep(60, 50)  # Play beep to indicate start
     finch.moveForwardUntilWall()
     # Turn left so the wall is to the right
     finch.turnLeft(90)
     print("Starting navigation")
+    finch.setBeakColor(255, 255, 0)  # Change beak LED to yellow (actively mapping)
     #Record starting position
     start = finch.getPosition()
     overrideThread = threading.Thread(target=checkForOverride)
@@ -61,11 +63,27 @@ def navigateRoom(finch: RoomFinch):
 
         if finch.checkRight() > SIDE_WALL_DIST:
             #No wall on the right, so turn to search to find corner position
+            finch.playBeep(80, 150)  # Higher beep for outward corner
             print(f"Wall lost on the right at {finch.getPosition()}, finding wall positions")
             p1, p2 = searchForCorner(finch)
             #TODO: Calculate Coordinates
     if  overrideFlag:
         finch.manualOverride()
+    finch.setBeakColor(0, 255, 0)  # Green beak LED to indicate completion
+    finch.playSuccessSound()  # Play success melody
+
+    smile = [
+        [0, 1, 0, 1, 0],
+        [0, 1, 0, 1, 0],
+        [0, 0, 0, 0, 0],
+        [1, 0, 0, 0, 1],
+        [0, 1, 1, 1, 0]
+    ]
+        
+    finch.displaySymbol(smile)  # Display smile face on 5x5 LED matrix
+    print("\nRoom Data Summary")
+    print(f"Average Temperature: {round(finch.getAverageTemperature(), 2)} °C")  # Display average temperature
+    print(f"Average Light Level: {round(finch.getAverageLight(), 2)}")           # Display average light level
         
     
 
