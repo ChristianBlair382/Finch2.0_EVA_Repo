@@ -2,18 +2,20 @@ from RoomFinch import RoomFinch
 from room_map import Room_Map
 import keyboard
 import threading
+import csv
 
 def searchForCorner(finch: RoomFinch):
     """Searches for the corner of the wall when the wall is lost on the right,
     by turning and taking regular distance scans and records the closest points to the finch"""
-    closest_points = []
+    closest_points = {}
     for _ in range(6):
-        dist = finch._finch.getDistance()
-        closest_points.append(dist)
+        dist = finch.scanObstacle()
+        closest_points[dist] = finch.returnWallPosition(dist)
         finch.turnRight(15)
     finch.turnLeft(90)
-    closest_points.sort()  # Sort by distance
-    return finch.returnWallPosition(closest_points[0]), finch.returnWallPosition(closest_points[1])  # Return position of closest point
+    closest_points = dict(sorted(closest_points.items()))
+    closest_walls = list(closest_points.values())[:2]
+    return closest_walls[0], closest_walls[1]
 
 overrideFlag = False
 #This will be replaced by frontend socketio in the future
@@ -26,6 +28,10 @@ overrideFlag = False
 
 def navigateRoom(finch: RoomFinch):
     """Navigates the room, minimizing turns"""
+    RoomMapManager = Room_Map(finch)
+    with open('anchors.csv', 'w', newline='') as csvfile: # Clear the anchors csv file at the start of navigation
+        writer = csv.writer(csvfile)
+        writer.writerow(['x', 'y'])  # Write header for clarity
     SIDE_WALL_DIST = 150  # Distance threshold to consider the side an outside corner
     BIG_STEP = 60
     RETURN_THRESHOLD = 20  # Distance threshold to consider as returning to start
@@ -56,17 +62,22 @@ def navigateRoom(finch: RoomFinch):
 
         if finch.moveForwardUntil(BIG_STEP):
             #Stopped by obstacle, so turn left and try again
-            #TODO: Forward wall position recording
+            RoomMapManager.add_anchor()
             print(f"Obstacle detected ahead at {finch.getPosition()}, turning left")
             finch.turnLeft(90)
             continue
 
-        if finch.checkRight() > SIDE_WALL_DIST:
+        right_distance, wall_position = finch.checkRight()
+        RoomMapManager.add_anchor_at_position(wall_position)  # Add anchor at the current position
+
+        if right_distance > SIDE_WALL_DIST:
             #No wall on the right, so turn to search to find corner position
             finch.playBeep(80, 1)  # Higher beep for outward corner
             print(f"Wall lost on the right at {finch.getPosition()}, finding wall positions")
             p1, p2 = searchForCorner(finch)
-            #TODO: Calculate Coordinates
+            RoomMapManager.add_anchor_at_position(p1)
+            RoomMapManager.add_anchor_at_position(p2)
+
     if  overrideFlag:
         finch.manualOverride()
     finch.setBeakColor(0, 255, 0)  # Green beak LED to indicate completion
@@ -84,7 +95,3 @@ def navigateRoom(finch: RoomFinch):
     print("\nRoom Data Summary")
     print(f"Average Temperature: {round(finch.getAverageTemperature(), 2)} °C")  # Display average temperature
     print(f"Average Light Level: {round(finch.getAverageLight(), 2)}")           # Display average light level
-        
-    
-
-    

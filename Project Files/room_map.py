@@ -1,12 +1,13 @@
-from BirdBrain import Finch
 from typing import TypeAlias
+from RoomFinch import RoomFinch
+import csv
 
 Anchor: TypeAlias = tuple[float, float] # an anchor is a tuple of x and y coordinates
 Line: TypeAlias = tuple[Anchor, Anchor] # a line is a tuple of two anchors
 
 class Room_Map:
     # the finch object, used to get the current location of the finch and to update the location of the finch on the map
-    finch_obj: Finch
+    finch_obj: RoomFinch
     finch_x: float = 0
     finch_y: float = 0
     finch_orientation: float = 0
@@ -20,10 +21,10 @@ class Room_Map:
     # the number of anchors and lines in the map, used to keep track of the number of anchors and lines in the map and to scale the map accordingly
     numOfAnchors: int = 0
     anchorList: list[Anchor] = []
-    numOfLines: int = 0
-    lineList: list[Line] = []
+    # numOfLines: int = 0
+    # lineList: list[Line] = []
 
-    def __init__(self, finch: Finch):
+    def __init__(self, finch: RoomFinch):
         self.finch_obj = finch
         # Placeholder for getting the initial location of the finch, will be updated in the future to reference the finch object directly
 
@@ -32,9 +33,28 @@ class Room_Map:
         self.finch_y = y
         self.finch_orientation = orientation
     
-    def add_anchor(self, anchor: Anchor): 
+    def add_anchor(self, dist = None): 
         # adds an anchor to the map and sets its location to the current location of the finch
+        if dist is None:
+            anchor = self.finch_obj.returnWallPosition(self.finch_obj.scanObstacle()) # gets the current location of the finch and adds it as an anchor to the map
+            self.anchorList.append(anchor)
+            with open('anchors.csv', 'a', newline='') as csvfile: # appends the new anchor to a csv file for storage
+                writer = csv.writer(csvfile)
+                writer.writerow(anchor)
+        else:
+            anchor = self.finch_obj.returnWallPosition(dist) # gets the current location of the finch and adds it as an anchor to the map
+            self.anchorList.append(anchor)
+            with open('anchors.csv', 'a', newline='') as csvfile: # appends the new anchor to a csv file for storage
+                writer = csv.writer(csvfile)
+                writer.writerow(anchor)
+        self.numOfAnchors += 1
+
+    def add_anchor_at_position(self, anchor: Anchor): 
+        # adds an anchor to the map at a specific position
         self.anchorList.append(anchor)
+        with open('anchors.csv', 'a', newline='') as csvfile: # appends the new anchor to a csv file for storage
+            writer = csv.writer(csvfile)
+            writer.writerow(anchor)
         self.numOfAnchors += 1
 
     def update_finch_location(self, x: float, y: float, orientation: float = 0): 
