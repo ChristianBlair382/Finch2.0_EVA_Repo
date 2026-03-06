@@ -139,13 +139,13 @@ class RoomFinch:
         """Turns 90 degrees right to check if there is an obstacle there, then turns back. Used for hugging right wall"""
         self.turnRight(90)
         dist = self._finch.getDistance()
+        wall_position = self.returnWallPosition(dist) # Get position of wall on the right for mapping purposes
         if dist < self.SIDE_DIST_CRITICAL:
             # If wall is too close on the right, back up a bit
             print(f"Wall too close on the right at {self.getPosition()}, backing up")
             self.moveBackward(10)
-        #TODO: Forward wall position recording if dist < threshold
         self.turnLeft(90)
-        return dist
+        return dist, wall_position
 
     def recordSensors(self):
         """Records the current light and temperature sensor readings and stores them in the respective lists."""
