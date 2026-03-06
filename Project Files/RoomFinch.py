@@ -38,9 +38,9 @@ class RoomFinch:
         Then updates approximate coordinate"""
         if distance is None:
             distance = self.MOVE_STEP
-
-        with self._hw_lock:  # Ensure that hardware access is thread-safe
-            self._finch.setMove('F', distance, self.maxLinearSpeed)
+        self.recordSensors()  # Record sensors before movement to capture conditions leading to movement
+        #with self._hw_lock:  # Ensure that hardware access is thread-safe
+        self._finch.setMove('F', distance, self.maxLinearSpeed)
 
         rad = math.radians(self.heading)
         self.x_position += distance * math.cos(rad)
@@ -63,8 +63,7 @@ class RoomFinch:
             if front_distance < distance_from_wall:
                 # If obstacle detected, stop movement and update position based on last move
                 self._stop_event.set()  # Signal to stop movement
-                with self._hw_lock:
-                    self._finch.stop()  # Stop the finch immediately
+                self._finch.stop()  # Stop the finch immediately
                 return
 
     def moveForwardUntil(self, distance=None, distance_from_wall=20):
@@ -73,25 +72,40 @@ class RoomFinch:
             distance = self.MOVE_STEP
         self._stop_event.clear()  # Clear any previous stop signal
         self._scanning_event.set()  # Signal that scanning should be active
+        for i in range(distance):
+            self.moveForward(1)
+            if self.scanObstacle() < distance_from_wall:
+                self.playBeep(40, 1)  # Low beep when obstacle ahead
+                self._stop_event.set()  # Signal to stop movement
+                self._finch.stop()  # Stop the finch immediately
+                break
 
-        scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
-        step_thread = threading.Thread(target=self.forwardSteps, args=(distance,))
-        scan_thread.start()
-        step_thread.start()
-        scan_thread.join()
-        step_thread.join()
+        #scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
+        #step_thread = threading.Thread(target=self.forwardSteps, args=(distance,))
+        #scan_thread.start()
+        #step_thread.start()
+        #scan_thread.join()
+        #step_thread.join()
         return self._stop_event.is_set()  # Returns true if stopped by obstacle, false if stopped by distance traveled
 
     def moveForwardUntilWall(self, distance_from_wall=20):
         """Move forward until an obstacle is detected within distance_from_wall cm in front. Then updates approximate coordinate"""
         self._stop_event.clear()
         self._scanning_event.set()
-        scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
-        scan_thread.start()
-        while self._scanning_event.is_set():
-            self.moveForward(1)  # Move in increments to allow for scanning
-        self._scanning_event.clear()
-        scan_thread.join()
+        while True:
+            self.moveForward(1)
+            front_distance = self.scanObstacle()
+            if front_distance < distance_from_wall:
+                self.playBeep(40, 1)  # Low beep when obstacle ahead
+                self._stop_event.set()
+                self._finch.stop()
+                break
+        #scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
+        #scan_thread.start()
+        #while self._scanning_event.is_set():
+        #    self.moveForward(1)  # Move in increments to allow for scanning
+        #self._scanning_event.clear()
+        #scan_thread.join()
 
 
     def moveBackward(self, distance=None):
@@ -118,8 +132,8 @@ class RoomFinch:
 
     def scanObstacle(self):
         """Returns front distance sensor reading in cm."""
-        with self._hw_lock:  # Ensure that hardware access is thread-safe
-            return self._finch.getDistance()
+        #with self._hw_lock:  # Ensure that hardware access is thread-safe
+        return self._finch.getDistance()
 
     def checkRight(self):
         """Turns 90 degrees right to check if there is an obstacle there, then turns back. Used for hugging right wall"""
@@ -134,6 +148,7 @@ class RoomFinch:
         return dist
 
     def recordSensors(self):
+        """Records the current light and temperature sensor readings and stores them in the respective lists."""
         left_light = self._finch.getLight("left") # Left light sensor (0–100)
         right_light = self._finch.getLight("right") # Right light sensor (0–100)
 
@@ -154,24 +169,30 @@ class RoomFinch:
             return 0
         return sum(self.light_readings) / len(self.light_readings)  # Compute average light level
 
-    def playBeep(self, note=60, duration=100):
-        self._finch.playNote(note, duration)  # Plays note number (0–100) for duration in ms
+    def playBeep(self, note=60, duration=1):
+        """Plays a beep sound with the given note and duration."""
+        self._finch.playNote(note, duration)  # Plays note number (0–100) for duration in seconds up to 16
 
     def playSuccessSound(self):
+        """Plays a success melody."""
         self._finch.playNote(60, 200)  # C note (Middle)
         self._finch.playNote(70, 200)  # E note (Higher)
         self._finch.playNote(80, 300)  # G note (Highest)
 
     def setBeakColor(self, r, g, b):
+        """Sets the color of the Finch's beak LED."""
         self._finch.setBeak(r, g, b)  # Sets RGB beak LED color (0–255 for each color)
 
     def clearBeak(self):
+        """Turns off the beak LED."""
         self._finch.setBeak(0, 0, 0)  # Turns off beak LED
 
     def displaySymbol(self, symbol_matrix):
+        """Displays a symbol on the Finch's 5x5 LED matrix. Input is a 2D list of 0s and 1s."""
         self._finch.setDisplay(symbol_matrix)  # Displays a 5x5 LED pattern on micro:bit
 
     def clearDisplay(self):
+        """Turns off all LEDs on the Finch's 5x5 display."""
         self._finch.setDisplay([[0]*5 for _ in range(5)])  # Turns off all LEDs on 5x5 display
     
     def distanceFromOrigin(self):
@@ -234,6 +255,10 @@ class RoomFinch:
         wall_x = self.x_position + distance * math.cos(rad)
         wall_y = self.y_position + distance * math.sin(rad)
         return (round(wall_x, 1), round(wall_y, 1))
+    
+    def setTurnScale(self, scale):
+        """Sets the turn scale factor, used for calibrating turns on different floor surfaces."""
+        self.turn_scale = scale
 
     def stop(self):
         self._finch.stop()

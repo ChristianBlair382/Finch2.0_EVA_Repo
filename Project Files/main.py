@@ -8,6 +8,7 @@ def main():
     print("=== Room Mapping Finch ===")
     print("1 - Manual Control")
     print("2 - Automatic Navigation")
+    print("3 - Set Turn Scale Manually")
     choice = input("Select mode: ").strip()
 
     if choice == "1":
@@ -23,9 +24,18 @@ def main():
             print("\nPlease correct finch orientation to original positioning if necessary.\nPress Enter to start navigation...")
             input()
 
-        print("\nStarting automatic navigation. Press 'm' at any time for manual override.\n")
+        print("\nStarting automatic navigation.\n")
         navigateRoom(finch)
 
+    elif choice == "3":
+        scaleInput = input("Enter turn scale factor (e.g. 1.0 for default): ").strip()
+        try:
+            scale = float(scaleInput)
+            finch.setTurnScale(scale)
+            print(f"Turn scale set to {scale}, starting navigation.")
+            navigateRoom(finch)
+        except ValueError:
+            print("Invalid input. Turn scale must be a number.")
     else:
         print("Invalid choice.")
 

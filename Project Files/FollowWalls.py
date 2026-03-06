@@ -1,6 +1,8 @@
 from RoomFinch import RoomFinch
 from room_map import Room_Map
-
+# |==================================|
+# |Deprecated, replaced by roomnav.py|
+# |==================================|
 # Currently assumes right angle turns in the room, so pathing will be very square, can change in the future.
 def follow_walls(finch: RoomFinch):
     """Drives the finch to hug the right wall around the room, and stops once it returns to the origin"""
