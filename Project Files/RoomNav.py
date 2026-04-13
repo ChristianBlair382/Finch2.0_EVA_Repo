@@ -3,6 +3,7 @@ from room_map import Room_Map
 import keyboard
 import threading
 import csv
+import time
 
 def searchForCorner(finch: RoomFinch):
     """Searches for the corner of the wall when the wall is lost on the right,
@@ -16,6 +17,53 @@ def searchForCorner(finch: RoomFinch):
     closest_points = dict(sorted(closest_points.items()))
     closest_walls = list(closest_points.values())[:2]
     return closest_walls[0], closest_walls[1]
+
+def manualOverride(finch: RoomFinch):
+    """Manual control using step-based movement for more consistent coordinate updates."""
+    print("\n--- MANUAL OVERRIDE MODE ---")
+    print("W = Forward | S = Backward | A = Turn Left | D = Turn Right | SPACE = Set Anchor | Q = Exit\n")
+
+    keyboard.block_key('w')
+    keyboard.block_key('a')
+    keyboard.block_key('s')
+    keyboard.block_key('d')
+    keyboard.block_key('space')
+    keyboard.block_key('q')
+
+    room_map_manager = Room_Map(finch)
+    with open('anchors.csv', 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['x', 'y'])
+
+    space_was_pressed = False
+
+    while True:
+        if keyboard.is_pressed('a'):
+            finch.turnLeft(90)
+        elif keyboard.is_pressed('d'):
+            finch.turnRight(90) # Tuned to 100 degrees to account for error in turning and to better align with walls when manually navigating
+        elif keyboard.is_pressed('w'):
+            finch.moveForward(10)
+        elif keyboard.is_pressed('s'):
+            finch.moveBackward(10)
+        elif keyboard.is_pressed('q'):
+            print("\nExiting manual override mode.\n")
+            for i in range(0, 3):
+                finch.playBeep(70, 1)  # Beep to indicate exiting manual mode
+                finch.setBeakColor(0, 128, 0)  # Set beak LED to green to indicate manual mode exit
+                time.sleep(0.5)
+                finch.setBeakColor(0, 0, 0)  # Set beak LED back to blue (default)
+            finch.stop()
+            break
+
+        space_pressed = keyboard.is_pressed('space')
+        if space_pressed and not space_was_pressed:
+            x, y, _ = finch.getPosition()
+            room_map_manager.add_anchor_at_position((x, y))
+            print(f"Anchor added at {(x, y)}")
+        space_was_pressed = space_pressed
+
+        time.sleep(0.02)
 
 overrideFlag = False
 #This will be replaced by frontend socketio in the future
@@ -78,8 +126,8 @@ def navigateRoom(finch: RoomFinch):
             RoomMapManager.add_anchor_at_position(p1)
             RoomMapManager.add_anchor_at_position(p2)
 
-    if  overrideFlag:
-        finch.manualOverride()
+    if overrideFlag:
+        manualOverride(finch)
     finch.setBeakColor(0, 255, 0)  # Green beak LED to indicate completion
     finch.playSuccessSound()  # Play success melody
 

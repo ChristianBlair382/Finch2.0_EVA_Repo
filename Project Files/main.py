@@ -1,9 +1,9 @@
 from RoomFinch import RoomFinch
-from RoomNav import navigateRoom
+from RoomNav import navigateRoom, manualOverride
 
 
 def main():
-    finch = RoomFinch()
+    finch = RoomFinch('B')  # Initialize Finch on port B
 
     print("=== Room Mapping Finch ===")
     print("1 - Manual Control")
@@ -12,7 +12,7 @@ def main():
     choice = input("Select mode: ").strip()
 
     if choice == "1":
-        finch.manualOverride()
+        manualOverride(finch)
 
     elif choice == "2":
         calibrate = input("Calibrate for floor surface? (y/n): ").strip().lower()
