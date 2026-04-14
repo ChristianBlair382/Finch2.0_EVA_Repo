@@ -1,6 +1,5 @@
 from BirdBrain import Finch as BirdBrainFinch
 import math
-import keyboard
 import threading
 
 # Most numbers are dummy numbers, change after testing, measurements are in cm
@@ -11,11 +10,14 @@ class RoomFinch:
     MOVE_STEP = 5               # distance per step
     RETURN_TOLERANCE = 15       # distance tolerance for deciding if the finch has returned to origin
     MIN_STEPS_BEFORE_CYCLE = 20 # avoid false origin detection at the start
+    ORIENTATION_OFFSET = 10     # degrees to adjust for consistent under-turning observed in testing
 
     def __init__(self, device='A', maxLinearSpeed=100, maxRotationSpeed=75):
         self._finch = BirdBrainFinch(device)
         self.maxLinearSpeed = maxLinearSpeed
         self.maxRotationSpeed = maxRotationSpeed
+
+        
 
         # Approximate position tracking (cm). Origin is where the robot starts.
         self.x_position = 0.0
@@ -32,6 +34,7 @@ class RoomFinch:
         self._hw_lock = threading.Lock()  # Lock for hardware access
         self._stop_event = threading.Event()    # Event to signal threads to stop
         self._scanning_event = threading.Event() # Event to signal when scanning is active
+        self._anchor_flag = False  # Flag to indicate when to set an anchor for mapping
 
     def moveForward(self, distance=None):
         """Move forward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed. 
@@ -123,12 +126,12 @@ class RoomFinch:
     def turnLeft(self, angle=90):
         """Turn left and update heading."""
         self._finch.setTurn('L', angle * self.turn_scale, self.maxRotationSpeed)
-        self.heading = (self.heading + angle) % 360
+        self.heading = (self.heading + (angle)) % 360
 
     def turnRight(self, angle=90):
         """Turn right and update heading."""
         self._finch.setTurn('R', angle * self.turn_scale, self.maxRotationSpeed)
-        self.heading = (self.heading - angle) % 360
+        self.heading = (self.heading - (angle)) % 360
 
     def scanObstacle(self):
         """Returns front distance sensor reading in cm."""
@@ -227,26 +230,6 @@ class RoomFinch:
                 return
         self.turn_scale = turn_num / 36
         print(f"Calibration complete. turn_scale set to {self.turn_scale}")
-        
-    def manualOverride(self):
-        """Manual control of the Finch using letters. Q to quit manual mode."""
-        print("\n--- MANUAL OVERRIDE MODE ---")
-        print("W = Forward | S = Backward | A = Turn Left | D = Turn Right | Q = Exit\n")
-
-        while True:
-            key = keyboard.read_key()
-            if key == "a":
-                self.turnLeft(1)
-            elif key == "d":
-                self.turnRight(1)
-            elif key == "w":
-                self.moveForward(1)
-            elif key == "s":
-                self.moveBackward(1)
-            elif key == "q":
-                print("\nExiting manual override mode.\n")
-                self.stop()
-                break
 
     def returnWallPosition(self, distance):
         """Returns the (x, y) position of a wall in front of the finch based on current position and heading.
@@ -259,6 +242,14 @@ class RoomFinch:
     def setTurnScale(self, scale):
         """Sets the turn scale factor, used for calibrating turns on different floor surfaces."""
         self.turn_scale = scale
+
+    def setAnchorFlag(self, value):
+        """Sets the anchor flag to indicate when to mark position for mapping."""
+        self._anchor_flag = value
+
+    def setMotors(self, left_motor, right_motor):
+        """Sets raw left and right motor values for responsive manual control."""
+        self._finch.setMotors(left_motor, right_motor)
 
     def stop(self):
         self._finch.stop()

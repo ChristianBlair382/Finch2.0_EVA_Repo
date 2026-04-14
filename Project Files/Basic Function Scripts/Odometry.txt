@@ -1,0 +1,17 @@
+def updateMotorOdometry(self, left_motor, right_motor, dt):
+        """Updates pose estimate from manual motor values and elapsed time."""
+        if dt <= 0:
+            return
+        if left_motor == 0 and right_motor == 0:
+            return
+
+        linear_speed = ((left_motor + right_motor) / 200.0) * self.maxLinearSpeed
+        angular_speed = ((right_motor - left_motor) / 200.0) * self.maxRotationSpeed
+
+        delta_heading = angular_speed * dt
+        distance = linear_speed * dt
+
+        mid_heading = math.radians(self.heading + (delta_heading / 2.0))
+        self.x_position += distance * math.cos(mid_heading)
+        self.y_position += distance * math.sin(mid_heading)
+        self.heading = (self.heading + delta_heading) % 360
