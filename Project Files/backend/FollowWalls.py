@@ -1,5 +1,5 @@
-from RoomFinch import RoomFinch
-from room_map import Room_Map
+from Lib.RoomFinch import RoomFinch
+from Lib.room_map import Room_Map
 # |==================================|
 # |Deprecated, replaced by roomnav.py|
 # |==================================|

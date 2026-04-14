@@ -1,4 +1,4 @@
-from RoomFinch import RoomFinch
+from Lib.RoomFinch import RoomFinch
 from RoomNav import navigateRoom
 
 
