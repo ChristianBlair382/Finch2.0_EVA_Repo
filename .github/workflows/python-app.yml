@@ -18,7 +18,7 @@ jobs:
     # we only want to test the backend directory here
     defaults:
       run:
-        working-directory: ./backend
+        working-directory: ./Project Files/backend
 
     runs-on: ubuntu-latest
 

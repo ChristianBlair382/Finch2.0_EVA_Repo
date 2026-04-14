@@ -15,7 +15,7 @@ jobs:
     # we want to change the default working directory to the frontend
     defaults:
       run:
-        working-directory: 'frontend'
+        working-directory: './Project Files/frontend'
 
     runs-on: ubuntu-latest
 
