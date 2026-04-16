@@ -1,5 +1,5 @@
 from Lib.RoomFinch import RoomFinch
-from RoomNav import navigateRoom
+from RoomNav import navigateRoom, manualOverride
 
 
 def main():
