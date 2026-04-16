@@ -1,0 +1,40 @@
+# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
+
+name: Node Test Demonstration
+
+on:
+  push:
+    branches: [ "main", "Regression_Testing" ]
+  pull_request:
+    branches: [ "main", "Regression_Testing" ]
+
+jobs:
+  build:
+
+    # we want to change the default working directory to the frontend
+    defaults:
+      run:
+        working-directory: './Project Files/frontend'
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [24.x]
+        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: './Project Files/frontend/package-lock.json'
+    - run: npm ci
+      working-directory: ./Project Files/frontend
+    - run: npm run build --if-present
+      working-directory: ./Project Files/frontend
+    - run: npm test
+      working-directory: ./Project Files/frontend
