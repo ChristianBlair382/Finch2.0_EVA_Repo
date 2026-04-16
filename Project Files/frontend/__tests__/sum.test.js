@@ -1,4 +1,4 @@
-const sum = require('../frontend/Assets/sum');
+const sum = require('../frontend/src/sum');
 
 test('adds 1 + 2 to equal 3', () => {
     expect(sum(1, 2)).toBe(3);
