@@ -3,6 +3,7 @@ from Lib.room_map import Room_Map
 import keyboard
 import threading
 import csv
+import time
 
 def searchForCorner(finch: RoomFinch):
     """Searches for the corner of the wall when the wall is lost on the right,
@@ -78,8 +79,8 @@ def navigateRoom(finch: RoomFinch):
             RoomMapManager.add_anchor_at_position(p1)
             RoomMapManager.add_anchor_at_position(p2)
 
-    if  overrideFlag:
-        finch.manualOverride()
+    if overrideFlag:
+        manualOverride(finch)
     finch.setBeakColor(0, 255, 0)  # Green beak LED to indicate completion
     finch.playSuccessSound()  # Play success melody
 
