@@ -5,9 +5,9 @@ name: Node Test Demonstration
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "Regression_Testing" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "Regression_Testing" ]
 
 jobs:
   build:
