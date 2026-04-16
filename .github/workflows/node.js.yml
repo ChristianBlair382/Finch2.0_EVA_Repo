@@ -31,10 +31,10 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
-        cache-dependency-path: 'frontend/package-lock.json'
+        cache-dependency-path: './Project Files/frontend/package-lock.json'
     - run: npm ci
-      working-directory: ./frontend
+      working-directory: ./Project Files/frontend
     - run: npm run build --if-present
-      working-directory: ./frontend
+      working-directory: ./Project Files/frontend
     - run: npm test
-      working-directory: ./frontend
+      working-directory: ./Project Files/frontend

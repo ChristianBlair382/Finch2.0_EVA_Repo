@@ -17,7 +17,7 @@ def searchForCorner(finch: RoomFinch):
     closest_walls = list(closest_points.values())[:2]
     return closest_walls[0], closest_walls[1]
 
-overrideFlag = False
+#overrideFlag = False
 #This will be replaced by frontend socketio in the future
 #def checkForOverride():
 #    """Checks for user input to override navigation and enter manual mode"""
@@ -37,7 +37,7 @@ def navigateRoom(finch: RoomFinch):
     RETURN_THRESHOLD = 20  # Distance threshold to consider as returning to start
     STEP_THRESHOLD = 6    # Minimum steps before allowing return to start condition
     steps = 0
-    global overrideFlag
+    overrideFlag = False
     finch.setBeakColor(0, 0, 255)  # Set beak LED to blue (starting state)
     # Finch approaches first wall
     print("Approaching first wall...")
