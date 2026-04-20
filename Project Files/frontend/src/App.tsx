@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
 
-const socket = io('http://localhost:5000')
+const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:5000';
+const socket = io(backendUrl)
 import './App.css'
 
 type Position = { x: number; y: number };
@@ -12,6 +13,10 @@ interface MapUpdatePayload {
   grid: Grid;
   robot: Position;
   path: Position[];
+}
+
+interface StatusUpdatePayload {
+  status: string;
 }
 
 function App() {
@@ -33,6 +38,10 @@ function App() {
       setGrid(data.grid);
       setRobot(data.robot);
       setPath(data.path);
+    });
+
+    socket.on("status_update", (data: StatusUpdatePayload) => {
+      setStatus(data.status);
     });
 
     return () => {
