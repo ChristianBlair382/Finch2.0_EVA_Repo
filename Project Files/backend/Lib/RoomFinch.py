@@ -5,17 +5,18 @@ import threading
 
 # Most numbers are dummy numbers, change after testing, measurements are in cm
 class RoomFinch:
-    FRONT_WALL_DIST = 20        # threshold for distance sensor for deciding if there is a wall ahead
-    SIDE_CHECK_DIST = 30        # threshold for deciding if there is a wall to the side when turning to check
-    SIDE_DIST_CRITICAL = 10     # threshold for deciding if the wall on the side is close enough for the finch to back away
+    #FRONT_WALL_DIST = 20        # threshold for distance sensor for deciding if there is a wall ahead
+    #SIDE_CHECK_DIST = 30        # threshold for deciding if there is a wall to the side when turning to check
     MOVE_STEP = 5               # distance per step
     RETURN_TOLERANCE = 15       # distance tolerance for deciding if the finch has returned to origin
     MIN_STEPS_BEFORE_CYCLE = 20 # avoid false origin detection at the start
+    ROTATION_SPEED = 40         # Speed for turning, adjust for compass reading speed
+    SIDE_DIST_CRITICAL_CLOSE = 10     # Distance threshold to consider the wall on the side too close, causing the finch to back up
+    SIDE_DIST_CRITICAL_FAR = 30     # Distance threshold to consider the wall on the side too far, causing the finch to go forward
 
-    def __init__(self, device='A', maxLinearSpeed=100, maxRotationSpeed=75):
+    def __init__(self, device='A', maxLinearSpeed=100):
         self._finch = BirdBrainFinch(device)
         self.maxLinearSpeed = maxLinearSpeed
-        self.maxRotationSpeed = maxRotationSpeed
 
         # Approximate position tracking (cm). Origin is where the robot starts.
         self.x_position = 0.0
@@ -122,12 +123,26 @@ class RoomFinch:
 
     def turnLeft(self, angle=90):
         """Turn left and update heading."""
-        self._finch.setTurn('L', angle * self.turn_scale, self.maxRotationSpeed)
+        target_heading = (self._finch.getCompass()-angle) % 360
+        self._finch.setMotors(-self.ROTATION_SPEED, self.ROTATION_SPEED)
+        while True:
+            current_heading = self._finch.getCompass()
+            if abs((current_heading - target_heading) % 360) < 2:  # Within 2 degrees of target
+                break
+        self._finch.stop()
+        #self._finch.setTurn('L', angle * self.turn_scale, self.ROTATION_SPEED)
         self.heading = (self.heading + angle) % 360
 
     def turnRight(self, angle=90):
         """Turn right and update heading."""
-        self._finch.setTurn('R', angle * self.turn_scale, self.maxRotationSpeed)
+        target_heading = (self._finch.getCompass()-angle) % 360
+        self._finch.setMotors(self.ROTATION_SPEED, -self.ROTATION_SPEED)
+        while True:
+            current_heading = self._finch.getCompass()
+            if abs((current_heading - target_heading) % 360) < 2:  # Within 2 degrees of target
+                break
+        self._finch.stop()
+        #self._finch.setTurn('R', angle * self.turn_scale, self.ROTATION_SPEED)
         self.heading = (self.heading - angle) % 360
 
     def scanObstacle(self):
@@ -144,6 +159,11 @@ class RoomFinch:
             # If wall is too close on the right, back up a bit
             print(f"Wall too close on the right at {self.getPosition()}, backing up")
             self.moveBackward(10)
+        elif dist > self.SIDE_DIST_CRITICAL_FAR:
+            # If wall is too far on the right, go forward a bit to try to find it
+            print(f"Wall too far on the right at {self.getPosition()}, moving forward to find wall")
+            self.moveForward(10)
+        
         self.turnLeft(90)
         return dist, wall_position
 
@@ -213,6 +233,7 @@ class RoomFinch:
 
     def calibrateFloor(self):
         """Turns until it detects the same distance in front as initial reading, and sets turn_scale accordingly."""
+        # Deprecated in favor of compass-based turning.
         initial_distance = self.scanObstacle()
         check_distance = 0
         turn_num = 0
