@@ -1,5 +1,5 @@
 from typing import TypeAlias
-from RoomFinch import RoomFinch
+from .RoomFinch import RoomFinch
 import csv
 
 Anchor: TypeAlias = tuple[float, float] # an anchor is a tuple of x and y coordinates
