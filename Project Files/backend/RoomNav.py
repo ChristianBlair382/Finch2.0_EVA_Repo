@@ -5,6 +5,11 @@ import threading
 import csv
 import time
 
+# RoomNav uses RoomFinch's public interface, which transparently switches
+# between PID-based and direct motor control based on how RoomFinch was
+# constructed (usePID flag). This file does NOT need to know which mode
+# is active. The notes below describe behavior assuming PID is on.
+
 def searchForCorner(finch: RoomFinch):
     """Searches for the corner of the wall when the wall is lost on the right,
     by turning and taking regular distance scans and records the closest points to the finch"""
@@ -19,7 +24,12 @@ def searchForCorner(finch: RoomFinch):
     return closest_walls[0], closest_walls[1]
 
 def manualOverride(finch: RoomFinch):
-    """Manual control using step-based movement for more consistent coordinate updates."""
+    """Manual control using step-based movement for more consistent coordinate updates.
+
+    Note: PID-based turns have a tolerance of ~2 degrees, so requesting
+    sub-tolerance turns (e.g. turnLeft(1)) automatically falls back to
+    direct motor control inside RoomFinch. The bigger 90-degree turns
+    below go through PID."""
     print("\n--- MANUAL OVERRIDE MODE ---")
     print("W = Forward | S = Backward | A = Turn Left | D = Turn Right | SPACE = Set Anchor | Q = Exit\n")
 
@@ -74,7 +84,22 @@ def manualOverride(finch: RoomFinch):
 #    overrideFlag = True
 
 def navigateRoom(finch: RoomFinch):
-    """Navigates the room, minimizing turns"""
+    """Navigates the room using right-wall following.
+
+    Strategy (assuming PID is enabled in RoomFinch):
+      - Approach the first wall, then turn left so the wall is on the right.
+      - Capture that wall-aligned heading as a 'cardinal' reference. Every
+        subsequent turn snaps back to one of the four cardinal headings
+        (wall_heading + 0/90/180/270), which prevents rotational drift
+        from accumulating across many turns.
+      - Drive forward in BIG_STEP-sized cruises with continuous heading-hold,
+        watching for inward corners (front sensor trips) and outward corners
+        (right side opens up). Drop map anchors at every corner event.
+      - Terminate when the robot returns to start position.
+
+    With PID off, this still works but turns drift more, so the cardinal
+    snap is less effective.
+    """
     RoomMapManager = Room_Map(finch)
     with open('anchors.csv', 'w', newline='') as csvfile: # Clear the anchors csv file at the start of navigation
         writer = csv.writer(csvfile)
@@ -94,11 +119,17 @@ def navigateRoom(finch: RoomFinch):
     finch.turnLeft(90)
     print("Starting navigation")
     finch.setBeakColor(255, 255, 0)  # Change beak LED to yellow (actively mapping)
+
+    # Capture the four cardinal headings derived from the wall-aligned start.
+    # Used to snap turns back to canonical directions instead of drifting.
+    wall_heading = finch.heading
+    cardinals = [(wall_heading + offset) % 360 for offset in (0, 90, 180, 270)]
+    cardinal_idx = 0  # current index into cardinals[]
+    print(f"Wall-aligned heading captured: {wall_heading:.1f}. "
+          f"Cardinals: {[round(c, 1) for c in cardinals]}")
+
     #Record starting position
     start = finch.getPosition()
-    #overrideThread = threading.Thread(target=checkForOverride)
-    #overrideThread.daemon = True  # Daemonize thread to exit when main program exits
-    #overrideThread.start()
     while not overrideFlag:
         steps += 1
         pos = finch.getPosition()
@@ -108,22 +139,26 @@ def navigateRoom(finch: RoomFinch):
             break
 
         if finch.moveForwardUntil(BIG_STEP):
-            #Stopped by obstacle, so turn left and try again
+            # Stopped by obstacle: inward corner. Turn left to next cardinal CCW.
             RoomMapManager.add_anchor()
-            print(f"Obstacle detected ahead at {finch.getPosition()}, turning left")
-            finch.turnLeft(90)
+            print(f"Obstacle detected ahead at {finch.getPosition()}, turning left to next cardinal")
+            cardinal_idx = (cardinal_idx + 1) % 4
+            finch.turnToHeading(cardinals[cardinal_idx])
             continue
 
         right_distance, wall_position = finch.checkRight()
         RoomMapManager.add_anchor_at_position(wall_position)  # Add anchor at the current position
 
         if right_distance > SIDE_WALL_DIST:
-            #No wall on the right, so turn to search to find corner position
+            # No wall on the right: outward corner. Search for the new wall positions
+            # for mapping, then turn right to the next cardinal CW to follow it.
             finch.playBeep(80, 1)  # Higher beep for outward corner
             print(f"Wall lost on the right at {finch.getPosition()}, finding wall positions")
             p1, p2 = searchForCorner(finch)
             RoomMapManager.add_anchor_at_position(p1)
             RoomMapManager.add_anchor_at_position(p2)
+            cardinal_idx = (cardinal_idx - 1) % 4
+            finch.turnToHeading(cardinals[cardinal_idx])
 
     if overrideFlag:
         manualOverride(finch)

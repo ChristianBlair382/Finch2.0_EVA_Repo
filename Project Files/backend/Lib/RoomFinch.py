@@ -1,5 +1,7 @@
 from .BirdBrain import Finch as BirdBrainFinch
+from .PidController import PIDFinchController
 import math
+import time
 import keyboard
 import threading
 
@@ -10,11 +12,29 @@ class RoomFinch:
     MOVE_STEP = 5               # distance per step
     RETURN_TOLERANCE = 15       # distance tolerance for deciding if the finch has returned to origin
     MIN_STEPS_BEFORE_CYCLE = 20 # avoid false origin detection at the start
-    ROTATION_SPEED = 40         # Speed for turning, adjust for compass reading speed
+    ROTATION_SPEED = 40         # Speed for turning (used in non-PID fallback path), adjust for compass reading speed
     SIDE_DIST_CRITICAL_CLOSE = 10     # Distance threshold to consider the wall on the side too close, causing the finch to back up
     SIDE_DIST_CRITICAL_FAR = 30     # Distance threshold to consider the wall on the side too far, causing the finch to go forward
 
-    def __init__(self, device='A', maxLinearSpeed=100):
+    # PID-mode settings
+    PID_TURN_FALLBACK_ANGLE = 3.0  # Angles smaller than this skip PID and use direct motor control
+                                   # (avoids the case where the requested turn is below the PID tolerance)
+
+    def __init__(self, device='A', maxLinearSpeed=100, usePID=True):
+        """Construct the RoomFinch.
+
+        Parameters
+        ----------
+        device : str
+            BirdBrain device letter ('A', 'B', or 'C').
+        maxLinearSpeed : int
+            Speed cap for the legacy (non-PID) move calls.
+        usePID : bool
+            If True, all motion primitives route through the PIDFinchController
+            for closed-loop control. If False (or if the PID later misbehaves),
+            the original blocking BirdBrain calls are used as a fallback.
+            Toggle at runtime via setUsePID().
+        """
         self._finch = BirdBrainFinch(device)
         self.maxLinearSpeed = maxLinearSpeed
 
@@ -28,24 +48,79 @@ class RoomFinch:
 
         self.light_readings = []          # Stores all recorded light sensor readings
         self.temperature_readings = []    # Stores all recorded temperature readings
-        self.turn_scale = 1.0             # Scale factor for turns to account for carpet, updated if calibrating carpet
+        self.turnScale = 1.0             # Scale factor for turns to account for carpet, updated if calibrating carpet
 
         self._hw_lock = threading.Lock()  # Lock for hardware access
         self._stop_event = threading.Event()    # Event to signal threads to stop
         self._scanning_event = threading.Event() # Event to signal when scanning is active
 
+        # ===== PID setup =====
+        # Internal heading uses CCW-positive convention; compass uses CW-positive.
+        # We capture the initial compass reading and convert via:
+        #   internal_heading = (initialCompass - currentCompass) % 360
+        # This anchors the internal "0 = initial forward" frame to the real-world compass.
+        self._usePID = usePID
+        if usePID:
+            self._pid = PIDFinchController(self._finch)
+            self._initialCompass = self._finch.getCompass()
+        else:
+            self._pid = None
+            self._initialCompass = None
+
+    # ------------------------------------------------------------------
+    # PID toggle / heading conversion helpers
+    # ------------------------------------------------------------------
+    def setUsePID(self, usePID):
+        """Toggle PID-based motion at runtime. Useful if PID misbehaves and
+        you need to fall back to the original blocking calls without
+        restarting."""
+        if usePID and self._pid is None:
+            self._pid = PIDFinchController(self._finch)
+            self._initialCompass = self._finch.getCompass()
+        self._usePID = usePID
+
+    def _compassToHeading(self, compass):
+        """Convert an absolute compass reading (CW-positive, 0-359) to the
+        internal heading frame (CCW-positive, 0 = initial forward)."""
+        return (self._initialCompass - compass) % 360
+
+    def _headingToCompass(self, heading):
+        """Convert an internal heading to its corresponding absolute compass
+        target (the compass value the robot should be reading when pointing
+        in that internal heading)."""
+        return (self._initialCompass - heading) % 360
+
+    def _syncHeadingFromCompass(self):
+        """Read the current (averaged) compass and update self.heading.
+        Call after any PID-driven turn to keep the internal heading in
+        sync with reality."""
+        self.heading = self._compassToHeading(self._pid.getAverageHeading())
+
+    # ------------------------------------------------------------------
+    # Motion primitives
+    # ------------------------------------------------------------------
     def moveForward(self, distance=None):
-        """Move forward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed. 
-        Then updates approximate coordinate"""
+        """Move forward by distance cms, defaulting to MOVE_STEP if no input.
+        Position is updated using actual encoder-measured distance when PID
+        is enabled, or commanded distance otherwise."""
         if distance is None:
             distance = self.MOVE_STEP
         self.recordSensors()  # Record sensors before movement to capture conditions leading to movement
-        #with self._hw_lock:  # Ensure that hardware access is thread-safe
-        self._finch.setMove('F', distance, self.maxLinearSpeed)
 
-        rad = math.radians(self.heading)
-        self.x_position += distance * math.cos(rad)
-        self.y_position += distance * math.sin(rad)
+        if self._usePID:
+            # driveStraight returns actual cm traveled (from encoders).
+            # Lock onto current heading so the robot drives a true straight line.
+            targetCompass = self._headingToCompass(self.heading)
+            actual = self._pid.driveStraight(distance, targetHeading=targetCompass)
+            rad = math.radians(self.heading)
+            self.x_position += actual * math.cos(rad)
+            self.y_position += actual * math.sin(rad)
+        else:
+            # Original blocking call
+            self._finch.setMove('F', distance, self.maxLinearSpeed)
+            rad = math.radians(self.heading)
+            self.x_position += distance * math.cos(rad)
+            self.y_position += distance * math.sin(rad)
 
     def forwardSteps(self, distance):
         """Main thread function to move forward and continuously update finch location until an obstacle is detected."""
@@ -68,86 +143,166 @@ class RoomFinch:
                 return
 
     def moveForwardUntil(self, distance=None, distance_from_wall=20):
-        """Move forward by distance cms, but stops early if an obstacle is detected in range"""
+        """Move forward by distance cms, but stops early if an obstacle is detected in range.
+        Returns True if stopped by obstacle, False if completed full distance."""
         if distance is None:
             distance = self.MOVE_STEP
-        self._stop_event.clear()  # Clear any previous stop signal
-        self._scanning_event.set()  # Signal that scanning should be active
+        self._stop_event.clear()
+        self._scanning_event.set()
+
+        if self._usePID:
+            stopped_by_obstacle = self._cruiseWithObstacleCheck(
+                max_distance=distance,
+                distance_from_wall=distance_from_wall)
+            return stopped_by_obstacle
+
+        # Original (non-PID) path
         for i in range(distance):
             self.moveForward(1)
             if self.scanObstacle() < distance_from_wall:
-                self.playBeep(40, 1)  # Low beep when obstacle ahead
-                self._stop_event.set()  # Signal to stop movement
-                self._finch.stop()  # Stop the finch immediately
+                self.playBeep(40, 1)
+                self._stop_event.set()
+                self._finch.stop()
                 break
-
-        #scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
-        #step_thread = threading.Thread(target=self.forwardSteps, args=(distance,))
-        #scan_thread.start()
-        #step_thread.start()
-        #scan_thread.join()
-        #step_thread.join()
-        return self._stop_event.is_set()  # Returns true if stopped by obstacle, false if stopped by distance traveled
+        return self._stop_event.is_set()
 
     def moveForwardUntilWall(self, distance_from_wall=20):
-        """Move forward until an obstacle is detected within distance_from_wall cm in front. Then updates approximate coordinate"""
+        """Move forward continuously until an obstacle is detected within
+        distance_from_wall cm in front."""
         self._stop_event.clear()
         self._scanning_event.set()
+
+        if self._usePID:
+            self._cruiseWithObstacleCheck(
+                max_distance=None,
+                distance_from_wall=distance_from_wall)
+            return
+
+        # Original (non-PID) path
         while True:
             self.moveForward(1)
             front_distance = self.scanObstacle()
             if front_distance < distance_from_wall:
-                self.playBeep(40, 1)  # Low beep when obstacle ahead
+                self.playBeep(40, 1)
                 self._stop_event.set()
                 self._finch.stop()
                 break
-        #scan_thread = threading.Thread(target=self.threadScan, args=(distance_from_wall,))
-        #scan_thread.start()
-        #while self._scanning_event.is_set():
-        #    self.moveForward(1)  # Move in increments to allow for scanning
-        #self._scanning_event.clear()
-        #scan_thread.join()
 
+    def _cruiseWithObstacleCheck(self, max_distance, distance_from_wall):
+        """PID-mode continuous forward motion with obstacle and (optional)
+        distance limit. Updates x/y from encoders incrementally so position
+        is accurate even when interrupted by a wall.
+
+        Returns True if stopped by obstacle, False if stopped by distance.
+        """
+        self._finch.resetEncoders()
+        time.sleep(0.25)
+        self._pid.primeForHeadingHold()
+        targetCompass = self._headingToCompass(self.heading)
+
+        rad = math.radians(self.heading)
+        last_traveled = 0.0
+        period = 1.0 / self._pid.LOOP_RATE_HZ
+        stopped_by_obstacle = False
+
+        while True:
+            # --- update position incrementally from encoders ---
+            leftRot  = self._finch.getEncoder('L')
+            rightRot = self._finch.getEncoder('R')
+            traveled = ((abs(leftRot) + abs(rightRot)) / 2.0
+                        * self._pid.WHEEL_CIRCUMFERENCE_CM)
+            delta = traveled - last_traveled
+            if delta > 0:
+                self.x_position += delta * math.cos(rad)
+                self.y_position += delta * math.sin(rad)
+                last_traveled = traveled
+
+            # --- distance limit check ---
+            if max_distance is not None and traveled >= max_distance:
+                self._finch.stop()
+                break
+
+            # --- obstacle check ---
+            if self.scanObstacle() < distance_from_wall:
+                self.playBeep(40, 1)
+                self._finch.stop()
+                self._stop_event.set()
+                stopped_by_obstacle = True
+                break
+
+            if self._stop_event.is_set():
+                self._finch.stop()
+                stopped_by_obstacle = True
+                break
+
+            # --- one PID heading-hold tick ---
+            self._pid.holdHeadingStep(targetCompass)
+            time.sleep(period)
+
+        self._scanning_event.clear()
+        return stopped_by_obstacle
 
     def moveBackward(self, distance=None):
-        """Move backward by distance cms, defaulting to MOVE_STEP if no input, at maxLinearSpeed. 
-        Then updates approximate coordinate"""
+        """Move backward by distance cms, defaulting to MOVE_STEP if no input."""
         if distance is None:
             distance = self.MOVE_STEP
 
-        self._finch.setMove('B', distance, self.maxLinearSpeed)
-
-        rad = math.radians(self.heading)
-        self.x_position -= distance * math.cos(rad)
-        self.y_position -= distance * math.sin(rad)
+        if self._usePID:
+            # Reverse driveStraight: pass negative distance; heading-hold still applies.
+            targetCompass = self._headingToCompass(self.heading)
+            actual = self._pid.driveStraight(-distance, targetHeading=targetCompass)
+            rad = math.radians(self.heading)
+            # actual is signed: negative means moved backward
+            self.x_position += actual * math.cos(rad)
+            self.y_position += actual * math.sin(rad)
+        else:
+            self._finch.setMove('B', distance, self.maxLinearSpeed)
+            rad = math.radians(self.heading)
+            self.x_position -= distance * math.cos(rad)
+            self.y_position -= distance * math.sin(rad)
 
     def turnLeft(self, angle=90):
-        """Turn left and update heading."""
-        target_heading = (self._finch.getCompass()-angle) % 360
-        self._finch.setMotors(-self.ROTATION_SPEED, self.ROTATION_SPEED)
-        while True:
-            current_heading = self._finch.getCompass()
-            if abs((current_heading - target_heading) % 360) < 2:  # Within 2 degrees of target
-                break
-        self._finch.stop()
-        #self._finch.setTurn('L', angle * self.turn_scale, self.ROTATION_SPEED)
-        self.heading = (self.heading + angle) % 360
+        """Turn left and update heading. Internal heading += angle."""
+        # Tiny turns: skip PID (would be below tolerance and produce no motion)
+        if self._usePID and angle >= self.PID_TURN_FALLBACK_ANGLE:
+            currentCompass = self._pid.getAverageHeading()
+            targetCompass = (currentCompass - angle) % 360
+            self._pid.turnTo(targetCompass)
+            self._syncHeadingFromCompass()
+        else:
+            self._finch.setTurn('L', angle * self.turnScale, self.ROTATION_SPEED)
+            self.heading = (self.heading + angle) % 360
+
 
     def turnRight(self, angle=90):
-        """Turn right and update heading."""
-        target_heading = (self._finch.getCompass()-angle) % 360
-        self._finch.setMotors(self.ROTATION_SPEED, -self.ROTATION_SPEED)
-        while True:
-            current_heading = self._finch.getCompass()
-            if abs((current_heading - target_heading) % 360) < 2:  # Within 2 degrees of target
-                break
-        self._finch.stop()
-        #self._finch.setTurn('R', angle * self.turn_scale, self.ROTATION_SPEED)
-        self.heading = (self.heading - angle) % 360
+        """Turn right and update heading. Internal heading -= angle."""
+        if self._usePID and angle >= self.PID_TURN_FALLBACK_ANGLE:
+            currentCompass = self._pid.getAverageHeading()
+            targetCompass = (currentCompass + angle) % 360
+            self._pid.turnTo(targetCompass)
+            self._syncHeadingFromCompass()
+        else:
+            self._finch.setTurn('R', angle * self.turnScale, self.ROTATION_SPEED)
+            self.heading = (self.heading - angle) % 360
+            
+    def turnToHeading(self, target_heading_internal):
+        """PID-only convenience: turn to an absolute internal heading
+        (e.g. one of the four cardinal directions captured at start of nav).
+        Falls back to relative turning if PID disabled."""
+        if self._usePID:
+            targetCompass = self._headingToCompass(target_heading_internal)
+            self._pid.turnTo(targetCompass)
+            self._syncHeadingFromCompass()
+        else:
+            # Compute shortest relative turn and dispatch
+            diff = (target_heading_internal - self.heading + 180) % 360 - 180
+            if diff > 0:
+                self.turnLeft(diff)
+            elif diff < 0:
+                self.turnRight(-diff)
 
     def scanObstacle(self):
         """Returns front distance sensor reading in cm."""
-        #with self._hw_lock:  # Ensure that hardware access is thread-safe
         return self._finch.getDistance()
 
     def checkRight(self):
@@ -155,7 +310,7 @@ class RoomFinch:
         self.turnRight(90)
         dist = self._finch.getDistance()
         wall_position = self.returnWallPosition(dist) # Get position of wall on the right for mapping purposes
-        if dist < self.SIDE_DIST_CRITICAL:
+        if dist < self.SIDE_DIST_CRITICAL_CLOSE:
             # If wall is too close on the right, back up a bit
             print(f"Wall too close on the right at {self.getPosition()}, backing up")
             self.moveBackward(10)
@@ -232,7 +387,7 @@ class RoomFinch:
                 round(self.heading, 1))
 
     def calibrateFloor(self):
-        """Turns until it detects the same distance in front as initial reading, and sets turn_scale accordingly."""
+        """Turns until it detects the same distance in front as initial reading, and sets turnScale accordingly."""
         # Deprecated in favor of compass-based turning.
         initial_distance = self.scanObstacle()
         check_distance = 0
@@ -246,8 +401,8 @@ class RoomFinch:
             if turn_num >= max_turns:
                 print("Calibration failed: couldn't find matching distance after 100 turns, turn scale unchanged.")
                 return
-        self.turn_scale = turn_num / 36
-        print(f"Calibration complete. turn_scale set to {self.turn_scale}")
+        self.turnScale = turn_num / 36
+        print(f"Calibration complete. turnScale set to {self.turnScale}")
         
     def manualOverride(self):
         """Manual control of the Finch using letters. Q to quit manual mode."""
@@ -279,7 +434,7 @@ class RoomFinch:
     
     def setTurnScale(self, scale):
         """Sets the turn scale factor, used for calibrating turns on different floor surfaces."""
-        self.turn_scale = scale
+        self.turnScale = scale
 
     def stop(self):
         self._finch.stop()

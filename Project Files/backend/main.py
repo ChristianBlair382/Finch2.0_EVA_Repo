@@ -3,7 +3,8 @@ from RoomNav import navigateRoom, manualOverride
 
 
 def main():
-    finch = RoomFinch('A')  # Initialize Finch on port A
+    USE_PID = True
+    finch = RoomFinch('A', usePID = USE_PID)  # Initialize Finch on port A
 
     print("=== Room Mapping Finch ===")
     print("1 - Manual Control")
