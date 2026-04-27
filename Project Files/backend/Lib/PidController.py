@@ -1,9 +1,10 @@
+print("hello world")
 """
 PID Controller
 Implements a PID Controller for the finch to more accurate control over where it is going
 
 Primitives provided:
-- turnTo(target_heading)          rotates to the absolute compass heading
+- turnTo(targetHeading)          rotates to the absolute compass heading
 - driveStraight(distance)         drive forward <distance> cms with head holding (maintains same compass heading)
 - holdHeadingStep(target, base)   one step of the head holding drive straight, use if you know what you are doing
 """
@@ -22,10 +23,10 @@ class CompassAverage:
  
     def set_size(self, size):
         """Resize the buffer. Existing samples are preserved up to the new capacity (oldest dropped if shrinking)."""
-        new_size = max(1, size)
-        if new_size == self._buffer.maxlen:
+        newSize = max(1, size)
+        if newSize == self._buffer.maxlen:
             return
-        self._buffer = deque(self._buffer, maxlen=new_size)
+        self._buffer = deque(self._buffer, maxlen=newSize)
  
     def reset(self):
         """Discard all buffered samples. Call when transitioning between behaviors so a stale buffer doesn't bias the next reading."""
@@ -34,12 +35,12 @@ class CompassAverage:
     def read(self):
         """Take one fresh compass reading, push it into the buffer, return the circular mean of the buffer in degrees [0, 360)."""
         raw_deg = self._finch.getCompass()
-        self._buffer.append(math.radians(raw_deg))
+        self._buffer.append(math.radians(rawDeg))
  
-        mean_sin = sum(math.sin(a) for a in self._buffer) / len(self._buffer)
-        mean_cos = sum(math.cos(a) for a in self._buffer) / len(self._buffer)
-        mean_rad = math.atan2(mean_sin, mean_cos)
-        return math.degrees(mean_rad) % 360
+        meanSin = sum(math.sin(a) for a in self._buffer) / len(self._buffer)
+        meanCos = sum(math.cos(a) for a in self._buffer) / len(self._buffer)
+        meanRad = math.atan2(meanSin, meanCos)
+        return math.degrees(meanRad) % 360
 
 class PIDFinchController:
     """
@@ -74,38 +75,68 @@ class PIDFinchController:
     LOOP_RATE_HZ = 20 # To match BirdBrain HTTP rate
 
     def __init__(self, finch,
-                heading_gains = None,
-                turn_gains = None,
-                drive_gains = None,
-                compass_average = None):
+                headingGains = None,
+                turnGains = None,
+                driveGains = None,
+                compassAverage = None):
         self._finch = finch
-        self.heading_gains = heading_gains or self.DEFAULT_HEADING_GAINS
-        self.turn_gains    = turn_gains    or self.DEFAULT_TURN_GAINS
-        self.drive_gains   = drive_gains   or self.DEFAULT_DRIVE_GAINS
+        self.headingGains = headingGains or self.DEFAULT_HEADING_GAINS
+        self.turnGains    = turnGains    or self.DEFAULT_TURN_GAINS
+        self.driveGains   = driveGains   or self.DEFAULT_DRIVE_GAINS
 
         # Allows passing in a compass average, but defaults to creating a new one.
-        self._compass = compass_average or CompassAverage(finch, size = self.HEADING_AVERAGE_SIZE)
+        self._compass = compassAverage or CompassAverage(finch, size = self.HEADING_AVERAGE_SIZE)
 
-        self._heading_state = self._fresh_state()
-        self._turn_state    = self._fresh_state()
-        self._drive_state   = self._fresh_state()
+        self._headingState = self._freshState()
+        self._turnState    = self._freshState()
+        self._driveState   = self._freshState()
 
     @staticmethod
-    def _fresh_state():
+    def _freshState():
         return {'integral': 0.0, 
-                'prev_err': 0.0,
-                'last_t': None}
+                'prevErr': 0.0,
+                'lastT': None}
 
     @staticmethod
-    def _reset_state(state):
+    def _resetState(state):
         state['integral'] = 0.0
-        state['prev_err'] = 0.0
-        state['last_t']   = None
+        state['prevErr'] = 0.0
+        state['lastT']   = None
 
     @staticmethod
-    def _shortest_angle_diff(target, current):
+    def _shortestAngleDiff(target, current):
         """Signed shortest angle difference (target - current), in (-180, 180] and handles the 359-0 wrap-around"""
         return (target - current + 180) % 360 - 180
     
-    
+    def _pidStep(self, error, gains, state, 
+                 outputLimits = (-100,100), 
+                 integralLimit = 30.0, 
+                 deadband = 0.0):
+        """One PID iteration, returns the clamped output"""
 
+        if abs(error) < deadband:
+            return 0.0
+        
+        kp,ki,kd = gains
+        now = time.monotonic()
+        dt = (now - state['lastT']) if state['lastT'] is not None else 0.0
+        state[['lastT']] = now
+
+        if dt > 0:
+            state['integral'] += error * dt
+            state['integral'] = max(-integralLimit, 
+                                    min(integralLimit, state['integral']))
+            derivative = (error - state['prevErr']) / dt
+        else:
+            derivative = 0.0
+        state['prevErr'] = error
+
+        output = kp * error + ki * state['integral'] + kd * derivative
+        low, high = outputLimits
+        return max(low, min(high, output))
+    
+    def _applyMinFloor(self, output):
+        """Boost tiny non-zero outputs above the stiction threshold so the wheels actually move when the error is small."""
+        if 0 < abs(output) < self.MIN_MOTOR_OUTPUT:
+            return math.copysign(self.MIN_MOTOR_OUTPUT, output)
+        return output
