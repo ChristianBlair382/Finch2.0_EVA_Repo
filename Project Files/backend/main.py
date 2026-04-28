@@ -18,14 +18,14 @@ def main():
         manualOverride(finch)
 
     elif choice == "2":
-        calibrate = input("Calibrate for floor surface? (y/n): ").strip().lower()
-
-        if calibrate == "y":
-            print("\nPlace the finch facing a wall, then press Enter to start calibration.")
-            input()
-            finch.calibrateFloor()
-            print("\nPlease correct finch orientation to original positioning if necessary.\nPress Enter to start navigation...")
-            input()
+        # Not needed, using PID
+        # calibrate = input("Calibrate for floor surface? (y/n): ").strip().lower()
+        # if calibrate == "y":
+        #    print("\nPlace the finch facing a wall, then press Enter to start calibration.")
+        #    input()
+        #    finch.calibrateFloor()
+        #    print("\nPlease correct finch orientation to original positioning if necessary.\nPress Enter to start navigation...")
+        #    input()
 
         print("\nStarting automatic navigation.\n")
         navigateRoom(finch)

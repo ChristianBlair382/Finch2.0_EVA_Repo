@@ -2,7 +2,6 @@ from .BirdBrain import Finch as BirdBrainFinch
 from .PidController import PIDFinchController
 import math
 import time
-import keyboard
 import threading
 
 # Most numbers are dummy numbers, change after testing, measurements are in cm
@@ -59,9 +58,16 @@ class RoomFinch:
         # Positive = counter-clockwise as left turn adds and right turn subtracts
         self.heading = 0.0
 
-        self.light_readings = []          # Stores all recorded light sensor readings
         self.temperature_readings = []    # Stores all recorded temperature readings
         self.turnScale = 1.0             # Scale factor for turns to account for carpet, updated if calibrating carpet
+
+        # Position-change subscribers. Frontend code (Flask-SocketIO) can
+        # register a callable here to get pushed updates whenever the
+        # robot's x/y/heading changes — avoids polling getPosition() at a
+        # fixed rate. Subscribers receive (x, y, heading) positionally.
+        # Exceptions in subscriber code are caught so motion isn't
+        # disrupted by a crashing listener.
+        self._position_callbacks = []
 
         # Tail LED state. Tail is an independent temperature display
         # (blue=cold → red=hot), not tied to the beak. The background
@@ -162,6 +168,7 @@ class RoomFinch:
             rad = math.radians(self.heading)
             self.x_position += distance * math.cos(rad)
             self.y_position += distance * math.sin(rad)
+        self._notify_position_changed()
 
     def forwardSteps(self, distance):
         """Main thread function to move forward and continuously update finch location until an obstacle is detected."""
@@ -264,6 +271,11 @@ class RoomFinch:
             self.x_position += delta * math.cos(rad)
             self.y_position += delta * math.sin(rad)
             last_traveled = traveled
+            # Notify every tick — gives the frontend a smooth ~20Hz live
+            # position trace during forward motion. Callbacks fire in the
+            # PID thread, so subscribers should be non-blocking (a Flask
+            # SocketIO emit is fine; a sleep() would starve the PID loop).
+            self._notify_position_changed()
 
             # --- distance limit check ---
             # For forward cruises, traveled grows positive toward max_distance.
@@ -312,6 +324,7 @@ class RoomFinch:
             rad = math.radians(self.heading)
             self.x_position -= distance * math.cos(rad)
             self.y_position -= distance * math.sin(rad)
+        self._notify_position_changed()
 
     def turnLeft(self, angle=90):
         """Turn left and update heading. Internal heading += angle.
@@ -334,6 +347,7 @@ class RoomFinch:
         else:
             self._finch.setTurn('L', angle * self.turnScale, self.ROTATION_SPEED)
             self.heading = (self.heading + angle) % 360
+        self._notify_position_changed()
 
     def turnRight(self, angle=90):
         """Turn right and update heading. Internal heading -= angle.
@@ -350,6 +364,7 @@ class RoomFinch:
         else:
             self._finch.setTurn('R', angle * self.turnScale, self.ROTATION_SPEED)
             self.heading = (self.heading - angle) % 360
+        self._notify_position_changed()
 
     def turnToHeading(self, target_heading_internal):
         """PID-only convenience: turn to an absolute internal heading
@@ -368,6 +383,7 @@ class RoomFinch:
             if abs(diff) < self.PID_TURN_FALLBACK_ANGLE:
                 # Tiny correction: just snap heading and skip the move
                 self.heading = target_heading_internal % 360
+                self._notify_position_changed()
                 return
             encoder_delta = diff * self.turnScale
             currentCompass = self._pid.getAverageHeading()
@@ -376,8 +392,10 @@ class RoomFinch:
             self._pid.turnTo(targetCompass)
             self.heading = target_heading_internal % 360
             self._lockedCompass = targetCompass
+            self._notify_position_changed()
         else:
             # Compute shortest relative turn and dispatch
+            # (turnLeft/turnRight will notify on completion)
             diff = (target_heading_internal - self.heading + 180) % 360 - 180
             if diff > 0:
                 self.turnLeft(diff)
@@ -506,26 +524,15 @@ class RoomFinch:
         return dist, wall_position
 
     def recordSensors(self):
-        """Records the current light and temperature sensor readings and stores them in the respective lists."""
-        left_light = self._finch.getLight("left") # Left light sensor (0–100)
-        right_light = self._finch.getLight("right") # Right light sensor (0–100)
-
-        avg_light = (left_light + right_light) / 2 # Average the two sensors
-
+        """Records the current temperature reading. Light sensors are
+        non-functional on this hardware so they're not polled correctly"""
         temp = self._finch.getTemperature() # Temperature in °C
-
-        self.light_readings.append(avg_light) # Store averaged light
-        self.temperature_readings.append(temp) # Store temperature
+        self.temperature_readings.append(temp)
 
     def getAverageTemperature(self):
         if len(self.temperature_readings) == 0:
             return 0
         return sum(self.temperature_readings) / len(self.temperature_readings)  # Compute average temperature
-
-    def getAverageLight(self):
-        if len(self.light_readings) == 0:
-            return 0
-        return sum(self.light_readings) / len(self.light_readings)  # Compute average light level
 
     def playBeep(self, note=60, duration=1):
         """Plays a beep sound with the given note and duration."""
@@ -609,6 +616,34 @@ class RoomFinch:
                 round(self.y_position, 1),
                 round(self.heading, 1))
 
+    def register_position_callback(self, cb):
+        """Subscribe to position-change events. cb will be called with
+        (x, y, heading) (raw, unrounded) after every motion that updates
+        the robot's pose. Idempotent — registering the same callback
+        twice still results in one subscription."""
+        if cb not in self._position_callbacks:
+            self._position_callbacks.append(cb)
+
+    def unregister_position_callback(self, cb):
+        """Remove a previously-registered subscriber. No-op if cb wasn't
+        registered."""
+        if cb in self._position_callbacks:
+            self._position_callbacks.remove(cb)
+
+    def _notify_position_changed(self):
+        """Fire every registered subscriber with the current pose. Caught
+        exceptions per-callback so a misbehaving subscriber can't take
+        down motion code. Called manually from motion primitives at the
+        end of each pose-changing operation (so x and y updates inside a
+        single move are reported as one event, not two intermediate
+        events)."""
+        x, y, h = self.x_position, self.y_position, self.heading
+        for cb in self._position_callbacks:
+            try:
+                cb(x, y, h)
+            except Exception as e:
+                print(f"[position callback] subscriber raised: {e}")
+
     def calibrateFloor(self):
         """Turns until it detects the same distance in front as initial reading, and sets turnScale accordingly."""
         # Deprecated in favor of compass-based turning.
@@ -627,26 +662,6 @@ class RoomFinch:
         self.turnScale = turn_num / 36
         print(f"Calibration complete. turnScale set to {self.turnScale}")
         
-    def manualOverride(self):
-        """Manual control of the Finch using letters. Q to quit manual mode."""
-        print("\n--- MANUAL OVERRIDE MODE ---")
-        print("W = Forward | S = Backward | A = Turn Left | D = Turn Right | Q = Exit\n")
-
-        while True:
-            key = keyboard.read_key()
-            if key == "a":
-                self.turnLeft(1)
-            elif key == "d":
-                self.turnRight(1)
-            elif key == "w":
-                self.moveForward(1)
-            elif key == "s":
-                self.moveBackward(1)
-            elif key == "q":
-                print("\nExiting manual override mode.\n")
-                self.stop()
-                break
-
     def returnWallPosition(self, distance):
         """Returns the (x, y) position of a wall in front of the finch based on current position and heading.
         Returns Float values rounded to 1 decimal place."""

@@ -170,12 +170,12 @@ class PIDFinchController:
     TURN_OUTPUT_LIMIT          = 15  # Max wheel speed during turnTo pivots
     HEADING_OUTPUT_LIMIT       = 12  # Max steering differential during cruise
     DRIVE_HEADING_OUTPUT_LIMIT = 12  # Max steering differential during driveStraight
-    DEFAULT_DRIVE_BASE_SPEED   = 35  # Forward speed for driveStraight
-    DEFAULT_CRUISE_BASE_SPEED  = 25  # Forward speed for holdHeadingStep cruise
+    DEFAULT_DRIVE_BASE_SPEED   = 30  # Forward speed for driveStraight
+    DEFAULT_CRUISE_BASE_SPEED  = 24  # Forward speed for holdHeadingStep cruise
 
     # ===== Tolerances and deadbands =====
     TURN_TOLERANCE_DEG     = 2.0   # turnTo exits when within this of target
-    TURN_TIMEOUT_SEC       = 7.0   # turnTo gives up after this long
+    TURN_TIMEOUT_SEC       = 9.0   # turnTo gives up after this long
     HEADING_DEADBAND_DEG   = 2.0   # heading PID ignores errors smaller than this
     DRIVE_TOLERANCE_CM     = 0.5   # driveStraight exits when within 5mm
 

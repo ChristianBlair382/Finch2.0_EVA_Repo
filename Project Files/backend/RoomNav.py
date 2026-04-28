@@ -1,7 +1,5 @@
 from Lib.RoomFinch import RoomFinch
 from Lib.RoomMap import Room_Map
-import keyboard
-import threading
 import csv
 import time
 
@@ -12,76 +10,108 @@ import time
 
 def searchForCorner(finch: RoomFinch):
     """Searches for the corner of the wall when the wall is lost on the right,
-    by turning and taking regular distance scans and records the closest points to the finch"""
-    closest_points = {}
+    by turning and taking regular distance scans, and returns the two closest
+    points to the finch in *traversal order* — i.e. ordered by the scan angle
+    they were taken at, not by distance.
+
+    Traversal order matters because anchors get written to anchors.csv
+    sequentially as the robot moves around the room; sorting by distance
+    here would produce out-of-sequence points whenever the closer wall
+    point happens to be at a later scan angle than the farther one."""
+    points_in_order = []  # list of (distance, wall_position) in scan order
     for _ in range(6):
         dist = finch.scanObstacle()
-        closest_points[dist] = finch.returnWallPosition(dist)
+        points_in_order.append((dist, finch.returnWallPosition(dist)))
         finch.turnRight(15)
     finch.turnLeft(90)
-    closest_points = dict(sorted(closest_points.items()))
-    closest_walls = list(closest_points.values())[:2]
-    return closest_walls[0], closest_walls[1]
+    # Pick the two closest scans, but return them in the order they were
+    # taken so the CSV stays monotonic along the traversal path.
+    indexed = list(enumerate(points_in_order))
+    closest_two = sorted(indexed, key=lambda iv: iv[1][0])[:2]
+    closest_two.sort(key=lambda iv: iv[0])  # back to scan-order
+    return closest_two[0][1][1], closest_two[1][1][1]
 
-def manualOverride(finch: RoomFinch):
-    """Manual control using step-based movement for more consistent coordinate updates.
+class ManualController:
+    """Stateless command interface for frontend-driven manual control.
 
-    Note: PID-based turns have a tolerance of ~2 degrees, so requesting
-    sub-tolerance turns (e.g. turnLeft(1)) automatically falls back to
-    direct motor control inside RoomFinch. The bigger 90-degree turns
-    below go through PID."""
-    print("\n--- MANUAL OVERRIDE MODE ---")
-    print("W = Forward | S = Backward | A = Turn Left | D = Turn Right | SPACE = Set Anchor | Q = Exit\n")
+    Replaces the old keyboard-poll-loop manualOverride function. Each method
+    is a single discrete action triggered by a button press on the frontend
+    (over Flask-SocketIO or similar). The controller owns the Room_Map
+    instance so anchors land in the same per-session anchors.csv as auto
+    nav, but holds no UI state of its own — sequence/timing is the
+    frontend's responsibility.
 
-    keyboard.block_key('w')
-    keyboard.block_key('a')
-    keyboard.block_key('s')
-    keyboard.block_key('d')
-    keyboard.block_key('space')
-    keyboard.block_key('q')
+    Typical wiring:
+        controller = ManualController(finch)
+        @socketio.on('manual_forward')
+        def _(): controller.forward()
+        @socketio.on('manual_scan')
+        def _(): controller.scan_anchor()
+        ...
+    """
 
-    room_map_manager = Room_Map(finch)
-    with open('anchors.csv', 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(['x', 'y'])
+    # Step sizes — the frontend sees only the action, not the magnitude,
+    # so these stay tunable here.
+    STEP_CM      = 10
+    TURN_DEG     = 90
 
-    space_was_pressed = False
+    def __init__(self, finch: RoomFinch):
+        self.finch = finch
+        self.room_map = Room_Map(finch)
+        # Reset anchors.csv at controller construction (same pattern as
+        # navigateRoom) — one fresh map per manual session.
+        with open('anchors.csv', 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['x', 'y'])
+        self.finch.setBeakColor(0, 0, 255)
+        print("Manual controller ready. Awaiting commands.")
 
-    while True:
-        if keyboard.is_pressed('a'):
-            finch.turnLeft(90)
-        elif keyboard.is_pressed('d'):
-            finch.turnRight(90) # Tuned to 100 degrees to account for error in turning and to better align with walls when manually navigating
-        elif keyboard.is_pressed('w'):
-            finch.moveForward(10)
-        elif keyboard.is_pressed('s'):
-            finch.moveBackward(10)
-        elif keyboard.is_pressed('q'):
-            print("\nExiting manual override mode.\n")
-            for i in range(0, 3):
-                finch.playBeep(70, 1)  # Beep to indicate exiting manual mode
-                finch.setBeakColor(0, 128, 0)  # Set beak LED to green to indicate manual mode exit
-                time.sleep(0.5)
-                finch.setBeakColor(0, 0, 0)  # Set beak LED back to blue (default)
-            finch.stop()
-            break
+    # --- motion commands -------------------------------------------------
+    def forward(self):
+        self.finch.moveForward(self.STEP_CM)
 
-        space_pressed = keyboard.is_pressed('space')
-        if space_pressed and not space_was_pressed:
-            x, y, _ = finch.getPosition()
-            room_map_manager.add_anchor_at_position((x, y))
-            print(f"Anchor added at {(x, y)}")
-        space_was_pressed = space_pressed
+    def backward(self):
+        self.finch.moveBackward(self.STEP_CM)
 
-        time.sleep(0.02)
-#overrideFlag = False
-#This will be replaced by frontend socketio in the future
-#def checkForOverride():
-#    """Checks for user input to override navigation and enter manual mode"""
-#    global overrideFlag
-#    keyboard.wait("m")  # Wait until "m" is pressed
-#    print("Manual override activated, entering manual mode")
-#    overrideFlag = True
+    def left(self):
+        self.finch.turnLeft(self.TURN_DEG)
+
+    def right(self):
+        self.finch.turnRight(self.TURN_DEG)
+
+    def stop(self):
+        """Halt any in-progress motion. Useful as an emergency-stop button."""
+        self.finch.stop()
+
+    # --- anchor commands -------------------------------------------------
+    def scan_anchor(self):
+        """Take a front-distance reading and project it to a wall coordinate,
+        then add to the map. This is the wall-projection version (matches
+        auto nav) — *not* the robot's own position. To anchor the robot's
+        position instead, use anchor_at_robot_position()."""
+        self.room_map.add_anchor()
+        last = self.room_map.anchorList[-1] if self.room_map.anchorList else None
+        print(f"Wall anchor added at {last}")
+
+    def anchor_at_robot_position(self):
+        """Drop an anchor at the robot's current (x, y). Useful for marking
+        traversal waypoints rather than walls."""
+        x, y, _ = self.finch.getPosition()
+        self.room_map.add_anchor_at_position((x, y))
+        print(f"Position anchor added at {(x, y)}")
+
+    # --- session lifecycle ----------------------------------------------
+    def shutdown(self):
+        """Frontend-driven equivalent of the old 'q' key: play exit
+        sequence and stop the robot. Safe to call more than once."""
+        print("Manual controller shutting down.")
+        for _ in range(3):
+            self.finch.playBeep(70, 1)
+            self.finch.setBeakColor(0, 128, 0)
+            time.sleep(0.5)
+            self.finch.setBeakColor(0, 0, 0)
+        self.finch.stop()
+
 
 def navigateRoom(finch: RoomFinch):
     """Navigates the room using right-wall following.
@@ -109,7 +139,6 @@ def navigateRoom(finch: RoomFinch):
     RETURN_THRESHOLD = 20  # Distance threshold to consider as returning to start
     STEP_THRESHOLD = 6    # Minimum steps before allowing return to start condition
     steps = 0
-    overrideFlag = False
     finch.setBeakColor(0, 0, 255)  # Set beak LED to blue (starting state)
     # Finch approaches first wall
     print("Approaching first wall...")
@@ -133,7 +162,7 @@ def navigateRoom(finch: RoomFinch):
 
     #Record starting position
     start = finch.getPosition()
-    while not overrideFlag:
+    while True:
         steps += 1
         pos = finch.getPosition()
         # Check with the threshold to account for error in estimation for if the finch has returned to starting position
@@ -171,8 +200,6 @@ def navigateRoom(finch: RoomFinch):
             # Re-align to the new wall on the right after rounding the corner.
             finch.alignParallelToRightWall()
 
-    if overrideFlag:
-        manualOverride(finch)
     finch.stopTail()                  # Tail off — navigation complete
     finch.setBeakColor(0, 255, 0)  # Green beak LED to indicate completion
     finch.playSuccessSound()  # Play success melody
@@ -188,4 +215,3 @@ def navigateRoom(finch: RoomFinch):
     finch.displaySymbol(smile)  # Display smile face on 5x5 LED matrix
     print("\nRoom Data Summary")
     print(f"Average Temperature: {round(finch.getAverageTemperature(), 2)} °C")  # Display average temperature
-    print(f"Average Light Level: {round(finch.getAverageLight(), 2)}")           # Display average light level
