@@ -117,6 +117,10 @@ def navigateRoom(finch: RoomFinch):
     finch.moveForwardUntilWall()
     # Turn left so the wall is to the right
     finch.turnLeft(90)
+    # Align parallel to the wall now that it's on the right. Corrects
+    # any drift introduced by the moveForwardUntilWall + turn sequence
+    # before we lock in cardinals.
+    finch.alignParallelToRightWall()
     print("Starting navigation")
     finch.setBeakColor(255, 255, 0)  # Change beak LED to yellow (actively mapping)
 
@@ -145,6 +149,10 @@ def navigateRoom(finch: RoomFinch):
             cardinal_idx = (cardinal_idx + 1) % 4
             print(f"[nav] inward corner. cardinal_idx -> {cardinal_idx}, "f"target={cardinals[cardinal_idx]:.1f}")
             finch.turnToHeading(cardinals[cardinal_idx])
+            # Re-align: turning into the new wall direction may leave us
+            # slightly off-parallel, and clipping into the wall is more
+            # likely on the new heading than during a long straightaway.
+            finch.alignParallelToRightWall()
             print(f"[nav] post-turn position: {finch.getPosition()}")
             continue
 
@@ -161,9 +169,12 @@ def navigateRoom(finch: RoomFinch):
             RoomMapManager.add_anchor_at_position(p2)
             cardinal_idx = (cardinal_idx - 1) % 4
             finch.turnToHeading(cardinals[cardinal_idx])
+            # Re-align to the new wall on the right after rounding the corner.
+            finch.alignParallelToRightWall()
 
     if overrideFlag:
         manualOverride(finch)
+    finch.stopTail()                  # Tail off — navigation complete
     finch.setBeakColor(0, 255, 0)  # Green beak LED to indicate completion
     finch.playSuccessSound()  # Play success melody
 

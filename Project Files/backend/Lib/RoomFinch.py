@@ -20,6 +20,19 @@ class RoomFinch:
     PID_TURN_FALLBACK_ANGLE = 3.0  # Angles smaller than this skip PID and use direct motor control
                                    # (avoids the case where the requested turn is below the PID tolerance)
 
+    # Tail LED settings
+    # The Finch's light sensors are non-functional on this hardware, so the
+    # tail uses temperature instead. Tail color is *independent* of the beak
+    # (which RoomNav uses for navigation status) — it lerps from
+    # TAIL_COLD_RGB at TAIL_TEMP_MIN_C to TAIL_HOT_RGB at TAIL_TEMP_MAX_C.
+    # RGB values are 0–100 (hardware scale) — BirdBrain clamps higher values,
+    # so using 0–100 keeps the linear interpolation clean across the gradient.
+    TAIL_TEMP_MIN_C = 18.0          # Pure cold-color at/below this temp
+    TAIL_TEMP_MAX_C = 28.0           # Pure hot-color at/above this temp
+    TAIL_COLD_RGB   = (0, 0, 100)    # Blue
+    TAIL_HOT_RGB    = (100, 0, 0)    # Red
+    TAIL_UPDATE_HZ  = 2.0            # Background poll rate
+
     def __init__(self, device='A', maxLinearSpeed=100, usePID=True):
         """Construct the RoomFinch.
 
@@ -50,6 +63,16 @@ class RoomFinch:
         self.temperature_readings = []    # Stores all recorded temperature readings
         self.turnScale = 1.0             # Scale factor for turns to account for carpet, updated if calibrating carpet
 
+        # Tail LED state. Tail is an independent temperature display
+        # (blue=cold → red=hot), not tied to the beak. The background
+        # thread (see _tailUpdaterLoop) polls temperature continuously
+        # so the tail keeps tracking even during turns / scans / idle.
+        self._latest_temp = None  # °C; None until first reading
+        self._tail_thread_stop = threading.Event()
+        self._tail_thread = threading.Thread(
+            target=self._tailUpdaterLoop, daemon=True, name="TailUpdater")
+        self._tail_thread.start()
+
         self._hw_lock = threading.Lock()  # Lock for hardware access
         self._stop_event = threading.Event()    # Event to signal threads to stop
         self._scanning_event = threading.Event() # Event to signal when scanning is active
@@ -69,9 +92,17 @@ class RoomFinch:
             # hardware. EncoderHeading starts at 0 by default, but read()
             # once to make the convention explicit.
             self._initialCompass = self._pid.getAverageHeading()
+            # Stable encoder-frame anchor for forward heading-hold. Updated
+            # only by turn primitives, so forward motion always locks onto
+            # the heading the most recent turn settled at — drift doesn't
+            # compound across moveForward calls. With turnScale != 1.0 this
+            # also tracks the encoder frame correctly even when self.heading
+            # (which tracks physical) diverges from it.
+            self._lockedCompass = self._initialCompass
         else:
             self._pid = None
             self._initialCompass = None
+            self._lockedCompass = None
 
     # ------------------------------------------------------------------
     # PID toggle / heading conversion helpers
@@ -83,6 +114,7 @@ class RoomFinch:
         if usePID and self._pid is None:
             self._pid = PIDFinchController(self._finch)
             self._initialCompass = self._pid.getAverageHeading()
+            self._lockedCompass = self._initialCompass
         self._usePID = usePID
 
     def _compassToHeading(self, compass):
@@ -115,10 +147,12 @@ class RoomFinch:
 
         if self._usePID:
             # driveStraight returns actual cm traveled (signed: positive
-            # forward, negative reverse). Lock onto current heading so the
-            # robot drives a true straight line.
-            targetCompass = self._headingToCompass(self.heading)
-            actual = self._pid.driveStraight(distance, targetHeading=targetCompass)
+            # forward, negative reverse). Lock onto _lockedCompass (set by
+            # the most recent turn) rather than re-deriving from self.heading,
+            # so we get a stable encoder-frame target across many forward
+            # calls, and so it stays correct even when turnScale != 1.0
+            # makes self.heading (physical) diverge from the encoder frame.
+            actual = self._pid.driveStraight(distance, targetHeading=self._lockedCompass)
             rad = math.radians(self.heading)
             self.x_position += actual * math.cos(rad)
             self.y_position += actual * math.sin(rad)
@@ -208,7 +242,9 @@ class RoomFinch:
         # otherwise the prime captures stale state.
         self._pid._resetEncodersAndResync()
         self._pid.primeForHeadingHold()
-        targetCompass = self._headingToCompass(self.heading)
+        # Lock onto the encoder anchor set by the most recent turn (see
+        # moveForward for the full rationale).
+        targetCompass = self._lockedCompass
 
         rad = math.radians(self.heading)
         last_traveled = 0.0
@@ -262,9 +298,10 @@ class RoomFinch:
             distance = self.MOVE_STEP
 
         if self._usePID:
-            # Reverse driveStraight: pass negative distance; heading-hold still applies.
-            targetCompass = self._headingToCompass(self.heading)
-            actual = self._pid.driveStraight(-distance, targetHeading=targetCompass)
+            # Reverse driveStraight: pass negative distance; heading-hold
+            # still applies, locked to the same _lockedCompass that forward
+            # motion uses.
+            actual = self._pid.driveStraight(-distance, targetHeading=self._lockedCompass)
             rad = math.radians(self.heading)
             # actual is signed: negative for reverse motion, so += correctly
             # moves position backward along the heading vector
@@ -277,24 +314,39 @@ class RoomFinch:
             self.y_position -= distance * math.sin(rad)
 
     def turnLeft(self, angle=90):
-        """Turn left and update heading. Internal heading += angle."""
+        """Turn left and update heading. Internal heading += angle.
+
+        With PID enabled, the commanded compass delta is scaled by self.turnScale
+        to compensate for wheel slip on the current surface. self.heading
+        tracks the *physical* heading change (the unscaled angle), since
+        position-tracking math relies on physical rotation."""
         # Tiny turns: skip PID (would be below tolerance and produce no motion)
         if self._usePID and angle >= self.PID_TURN_FALLBACK_ANGLE:
+            encoder_delta = angle * self.turnScale
             currentCompass = self._pid.getAverageHeading()
-            targetCompass = (currentCompass - angle) % 360
+            # Compass is CW-positive; left turn = compass decreases.
+            targetCompass = (currentCompass - encoder_delta) % 360
             self._pid.turnTo(targetCompass)
-            self._syncHeadingFromCompass()
+            # Trust the commanded angle for the physical-heading update,
+            # not the encoder reading (which over-counts when turnScale > 1).
+            self.heading = (self.heading + angle) % 360
+            self._lockedCompass = targetCompass
         else:
             self._finch.setTurn('L', angle * self.turnScale, self.ROTATION_SPEED)
             self.heading = (self.heading + angle) % 360
 
     def turnRight(self, angle=90):
-        """Turn right and update heading. Internal heading -= angle."""
+        """Turn right and update heading. Internal heading -= angle.
+
+        See turnLeft for the turnScale + _lockedCompass rationale."""
         if self._usePID and angle >= self.PID_TURN_FALLBACK_ANGLE:
+            encoder_delta = angle * self.turnScale
             currentCompass = self._pid.getAverageHeading()
-            targetCompass = (currentCompass + angle) % 360
+            # Compass is CW-positive; right turn = compass increases.
+            targetCompass = (currentCompass + encoder_delta) % 360
             self._pid.turnTo(targetCompass)
-            self._syncHeadingFromCompass()
+            self.heading = (self.heading - angle) % 360
+            self._lockedCompass = targetCompass
         else:
             self._finch.setTurn('R', angle * self.turnScale, self.ROTATION_SPEED)
             self.heading = (self.heading - angle) % 360
@@ -302,11 +354,28 @@ class RoomFinch:
     def turnToHeading(self, target_heading_internal):
         """PID-only convenience: turn to an absolute internal heading
         (e.g. one of the four cardinal directions captured at start of nav).
-        Falls back to relative turning if PID disabled."""
+        Falls back to relative turning if PID disabled.
+
+        Computes the shortest-path physical rotation to reach the target,
+        scales by self.turnScale to get the encoder-frame command, and
+        updates self.heading to the requested target (trusting the command
+        rather than the encoder, for the same reason as turnLeft/turnRight)."""
         if self._usePID:
-            targetCompass = self._headingToCompass(target_heading_internal)
+            # Shortest signed physical rotation to reach the target,
+            # in CCW-positive internal frame: positive means turn left.
+            diff = (target_heading_internal - self.heading + 180) % 360 - 180
+            # Skip PID for sub-tolerance turns (same logic as turnLeft/Right)
+            if abs(diff) < self.PID_TURN_FALLBACK_ANGLE:
+                # Tiny correction: just snap heading and skip the move
+                self.heading = target_heading_internal % 360
+                return
+            encoder_delta = diff * self.turnScale
+            currentCompass = self._pid.getAverageHeading()
+            # CCW-positive physical maps to CW-negative compass.
+            targetCompass = (currentCompass - encoder_delta) % 360
             self._pid.turnTo(targetCompass)
-            self._syncHeadingFromCompass()
+            self.heading = target_heading_internal % 360
+            self._lockedCompass = targetCompass
         else:
             # Compute shortest relative turn and dispatch
             diff = (target_heading_internal - self.heading + 180) % 360 - 180
@@ -318,6 +387,76 @@ class RoomFinch:
     def scanObstacle(self):
         """Returns front distance sensor reading in cm."""
         return self._finch.getDistance()
+
+    def alignParallelToRightWall(self, probe_angle_deg=30,
+                                  max_correction_deg=45,
+                                  max_wall_distance_cm=150):
+        """Detect the angle of the wall on the robot's right and rotate to
+        be parallel to it. Useful for correcting wheel-slip drift introduced
+        by 90-degree turns, and for avoiding the chassis-clipping problem
+        where the robot is angled enough that its corner contacts the wall
+        even though the front distance sensor reads clear ahead.
+
+        Algorithm: take two distance readings at this position — one with
+        the sensor pointing perpendicular-right, one tilted forward of
+        perpendicular by `probe_angle_deg` — and compute the wall angle from
+        the geometry. Then rotate by that angle (plus the bookkeeping to
+        undo the sensor-aiming rotations) to end up parallel.
+
+        Returns the corrected wall angle in degrees (signed, CCW-positive
+        in the internal heading frame), or 0.0 if alignment was skipped.
+
+        Parameters
+        ----------
+        probe_angle_deg : float
+            How far forward of perpendicular to take the second reading.
+            Larger gives more angular sensitivity but risks unreliable
+            ultrasonic returns at glancing angles. 15-30° is sensible.
+        max_correction_deg : float
+            Cap on |computed wall angle|. Above this, alignment is skipped
+            (probably a misreading: glancing return, no wall, etc.).
+        max_wall_distance_cm : float
+            If R_perp > this, no wall is considered to be on the right
+            and alignment is skipped.
+        """
+        # Step 1: face perpendicular-right, read distance to wall.
+        self.turnRight(90)
+        R_perp = self.scanObstacle()
+        if R_perp > max_wall_distance_cm:
+            print(f"[align] no wall in range (R_perp={R_perp:.1f}); skipping")
+            self.turnLeft(90)  # restore original heading
+            return 0.0
+
+        # Step 2: tilt sensor forward of perpendicular, read again.
+        self.turnLeft(probe_angle_deg)
+        R_forward = self.scanObstacle()
+
+        # Step 3: solve for wall angle β from the two readings.
+        #   R_forward = R_perp · cos(β) / cos(θ − β)
+        #   ⇒ tan(β) = (R_perp − R_forward·cos(θ)) / (R_forward·sin(θ))
+        theta_rad = math.radians(probe_angle_deg)
+        numer = R_perp - R_forward * math.cos(theta_rad)
+        denom = R_forward * math.sin(theta_rad)
+        beta_deg = math.degrees(math.atan2(numer, denom))
+
+        if abs(beta_deg) > max_correction_deg:
+            print(f"[align] β={beta_deg:.1f}° exceeds cap ({max_correction_deg}°); "
+                  f"skipping. R_perp={R_perp:.1f}, R_forward={R_forward:.1f}")
+            self.turnLeft(90 - probe_angle_deg)  # restore original heading
+            return 0.0
+
+        # Step 4: rotate to wall-parallel.
+        #   currently at internal heading = original − 90 + probe_angle (CCW)
+        #   target heading                = original + β
+        #   required CCW rotation         = 90 + β − probe_angle
+        correction = 90 + beta_deg - probe_angle_deg
+        if correction >= 0:
+            self.turnLeft(correction)
+        else:
+            self.turnRight(-correction)
+        print(f"[align] R_perp={R_perp:.1f} R_forward={R_forward:.1f} "
+              f"β={beta_deg:.1f}° → rotated by {beta_deg:.1f}°")
+        return beta_deg
 
     def checkRight(self):
         """Turns 90 degrees right to check if there is an obstacle there, then turns back. Used for hugging right wall"""
@@ -369,12 +508,52 @@ class RoomFinch:
         self._finch.playNote(80, 300)  # G note (Highest)
 
     def setBeakColor(self, r, g, b):
-        """Sets the color of the Finch's beak LED."""
-        self._finch.setBeak(r, g, b)  # Sets RGB beak LED color (0–255 for each color)
+        """Sets the color of the Finch's beak LED.
+        Note: the tail LED is independent — it shows a temperature gradient,
+        driven by the background tail-updater thread, not by the beak."""
+        self._finch.setBeak(r, g, b)
 
     def clearBeak(self):
-        """Turns off the beak LED."""
-        self._finch.setBeak(0, 0, 0)  # Turns off beak LED
+        """Turns off the beak LED. Does not affect the tail (which is
+        a temperature display, not a status indicator)."""
+        self._finch.setBeak(0, 0, 0)
+
+    def _updateTail(self):
+        """Drive the tail LED to a color interpolated between TAIL_COLD_RGB
+        and TAIL_HOT_RGB based on the latest temperature reading. Called
+        from recordSensors and the background tail thread. If no temp
+        reading has been taken yet, the tail is left dark."""
+        if self._latest_temp is None:
+            self._finch.setTail("all", 0, 0, 0)
+            return
+        # Linear ramp clamped to [0, 1]: 0 at TAIL_TEMP_MIN_C, 1 at MAX.
+        span = self.TAIL_TEMP_MAX_C - self.TAIL_TEMP_MIN_C
+        t = max(0.0, min(1.0, (self._latest_temp - self.TAIL_TEMP_MIN_C) / span))
+        cold_r, cold_g, cold_b = self.TAIL_COLD_RGB
+        hot_r, hot_g, hot_b = self.TAIL_HOT_RGB
+        r = int(cold_r + (hot_r - cold_r) * t)
+        g = int(cold_g + (hot_g - cold_g) * t)
+        b = int(cold_b + (hot_b - cold_b) * t)
+        self._finch.setTail("all", r, g, b)
+
+    def _tailUpdaterLoop(self):
+        """Background daemon: poll temperature at TAIL_UPDATE_HZ and refresh
+        the tail LED so its color tracks ambient temp continuously, even
+        when no other code path is taking sensor readings (e.g. during
+        turns, scans, or manual-mode idle).
+
+        Kept at a low rate so it barely competes with the PID loop's HTTP
+        bandwidth. Exceptions are swallowed so a transient hardware error
+        can't kill the thread silently mid-run."""
+        period = 1.0 / self.TAIL_UPDATE_HZ
+        while not self._tail_thread_stop.is_set():
+            try:
+                self._latest_temp = self._finch.getTemperature()
+                self._updateTail()
+            except Exception:
+                pass
+            # Event.wait() instead of time.sleep so shutdown is immediate
+            self._tail_thread_stop.wait(period)
 
     def displaySymbol(self, symbol_matrix):
         """Displays a symbol on the Finch's 5x5 LED matrix. Input is a 2D list of 0s and 1s."""
@@ -450,8 +629,25 @@ class RoomFinch:
         """Sets the turn scale factor, used for calibrating turns on different floor surfaces."""
         self.turnScale = scale
 
+    def stopTail(self):
+        """Stop the background tail-updater thread and turn off the tail
+        LEDs. After this call the tail won't track temperature anymore for
+        the rest of this RoomFinch's lifetime. Idempotent — safe to call
+        more than once. Used at the end of navigation and as part of full
+        shutdown."""
+        self._tail_thread_stop.set()
+        if self._tail_thread.is_alive():
+            # Wait briefly so an in-flight setTail call from the thread
+            # can't re-light the tail right after we turn it off below.
+            # Worst case is one period (~0.5s) plus the HTTP round-trip.
+            self._tail_thread.join(timeout=2.0)
+        self._finch.setTail("all", 0, 0, 0)
+
     def stop(self):
         self._finch.stop()
 
     def stopAll(self):
+        # Stop the tail thread (and turn off tail LEDs) before tearing
+        # down the rest of the hardware.
+        self.stopTail()
         self._finch.stopAll()
