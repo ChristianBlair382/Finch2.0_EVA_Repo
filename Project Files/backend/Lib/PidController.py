@@ -174,15 +174,15 @@ class PIDFinchController:
     DEFAULT_CRUISE_BASE_SPEED  = 25  # Forward speed for holdHeadingStep cruise
 
     # ===== Tolerances and deadbands =====
-    TURN_TOLERANCE_DEG     = 4.0   # turnTo exits when within this of target
-    TURN_TIMEOUT_SEC       = 6.0   # turnTo gives up after this long
-    HEADING_DEADBAND_DEG   = 3.0   # heading PID ignores errors smaller than this
+    TURN_TOLERANCE_DEG     = 2.0   # turnTo exits when within this of target
+    TURN_TIMEOUT_SEC       = 7.0   # turnTo gives up after this long
+    HEADING_DEADBAND_DEG   = 2.0   # heading PID ignores errors smaller than this
     DRIVE_TOLERANCE_CM     = 0.5   # driveStraight exits when within 5mm
 
     # ===== Heading-source averaging window =====
     # Only meaningful for CompassAverage. EncoderHeading ignores setSize().
     TURN_AVERAGE_SIZE = 2
-    HEADING_AVERAGE_SIZE = 5
+    HEADING_AVERAGE_SIZE = 3
 
     # ===== Hardware =====
     WHEEL_CIRCUMFERENCE_CM = 16.4

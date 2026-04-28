@@ -115,12 +115,11 @@ def navigateRoom(finch: RoomFinch):
     print("Approaching first wall...")
     finch.playBeep(60, 1)  # Play beep to indicate start
     finch.moveForwardUntilWall()
-    # Turn left so the wall is to the right
-    finch.turnLeft(90)
-    # Align parallel to the wall now that it's on the right. Corrects
-    # any drift introduced by the moveForwardUntilWall + turn sequence
-    # before we lock in cardinals.
-    finch.alignParallelToRightWall()
+    # Robot is now facing the wall. Skip turnLeft(90) and align directly
+    # — the alignment routine already does a CCW 90° + β rotation in
+    # assume_facing_wall mode, so the wall ends up on the right and we
+    # avoid two wasted turns.
+    finch.alignParallelToRightWall(assume_facing_wall=True)
     print("Starting navigation")
     finch.setBeakColor(255, 255, 0)  # Change beak LED to yellow (actively mapping)
 

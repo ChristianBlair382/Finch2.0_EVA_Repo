@@ -388,20 +388,22 @@ class RoomFinch:
         """Returns front distance sensor reading in cm."""
         return self._finch.getDistance()
 
-    def alignParallelToRightWall(self, probe_angle_deg=30,
+    def alignParallelToRightWall(self, probe_angle_deg=20,
                                   max_correction_deg=45,
-                                  max_wall_distance_cm=150):
+                                  max_wall_distance_cm=150,
+                                  assume_facing_wall=False):
         """Detect the angle of the wall on the robot's right and rotate to
         be parallel to it. Useful for correcting wheel-slip drift introduced
         by 90-degree turns, and for avoiding the chassis-clipping problem
         where the robot is angled enough that its corner contacts the wall
         even though the front distance sensor reads clear ahead.
 
-        Algorithm: take two distance readings at this position — one with
-        the sensor pointing perpendicular-right, one tilted forward of
-        perpendicular by `probe_angle_deg` — and compute the wall angle from
-        the geometry. Then rotate by that angle (plus the bookkeeping to
-        undo the sensor-aiming rotations) to end up parallel.
+        Algorithm: take *symmetric* distance readings at +probe_angle_deg
+        and -probe_angle_deg from perpendicular-right, and compute the wall
+        angle from the asymmetry between them. Symmetric probing cancels
+        the ultrasonic beam-cone bias that would otherwise make a single
+        tilted reading systematically short and produce a false β > 0
+        every time the wall is actually perpendicular.
 
         Returns the corrected wall angle in degrees (signed, CCW-positive
         in the internal heading frame), or 0.0 if alignment was skipped.
@@ -409,57 +411,81 @@ class RoomFinch:
         Parameters
         ----------
         probe_angle_deg : float
-            How far forward of perpendicular to take the second reading.
-            Larger gives more angular sensitivity but risks unreliable
-            ultrasonic returns at glancing angles. 15-30° is sensible.
+            Magnitude of the symmetric probe offsets from perpendicular.
+            Larger gives more β sensitivity (signal scales as tan(θ)) but
+            also more wheel-slip noise per call. 15-25° is sensible.
         max_correction_deg : float
             Cap on |computed wall angle|. Above this, alignment is skipped
             (probably a misreading: glancing return, no wall, etc.).
         max_wall_distance_cm : float
             If R_perp > this, no wall is considered to be on the right
             and alignment is skipped.
+        assume_facing_wall : bool
+            If True, the robot is already facing the wall (e.g. just
+            stopped via moveForwardUntilWall, or already turned right
+            inside checkRight). Skip the initial turnRight(90), saving
+            two turns. End state is "wall on right + parallel" in either
+            mode.
         """
-        # Step 1: face perpendicular-right, read distance to wall.
-        self.turnRight(90)
+        if not assume_facing_wall:
+            self.turnRight(90)
+
         R_perp = self.scanObstacle()
         if R_perp > max_wall_distance_cm:
             print(f"[align] no wall in range (R_perp={R_perp:.1f}); skipping")
-            self.turnLeft(90)  # restore original heading
+            # End state is always "wall on right" — CCW 90° from facing-wall.
+            self.turnLeft(90)
             return 0.0
 
-        # Step 2: tilt sensor forward of perpendicular, read again.
+        # Symmetric probe: rotate to +probe_angle_deg, read R_pos, then
+        # rotate to -probe_angle_deg (CCW from +θ to -θ requires turning
+        # right by 2θ), read R_neg.
         self.turnLeft(probe_angle_deg)
-        R_forward = self.scanObstacle()
+        R_pos = self.scanObstacle()
+        self.turnRight(2 * probe_angle_deg)
+        R_neg = self.scanObstacle()
 
-        # Step 3: solve for wall angle β from the two readings.
-        #   R_forward = R_perp · cos(β) / cos(θ − β)
-        #   ⇒ tan(β) = (R_perp − R_forward·cos(θ)) / (R_forward·sin(θ))
+        # tan(β) = (R_neg − R_pos) / (R_pos + R_neg) · cot(θ).
+        # See class docstring above for derivation. Any symmetric
+        # multiplicative reading bias cancels in the ratio.
         theta_rad = math.radians(probe_angle_deg)
-        numer = R_perp - R_forward * math.cos(theta_rad)
-        denom = R_forward * math.sin(theta_rad)
-        beta_deg = math.degrees(math.atan2(numer, denom))
+        sum_R = R_pos + R_neg
+        if sum_R <= 0:
+            print(f"[align] non-positive reading sum (R_pos={R_pos}, "
+                  f"R_neg={R_neg}); skipping")
+            # We're at -probe_angle from perpendicular-facing-wall.
+            # Need CCW (90 + θ) to reach wall-on-right state.
+            self.turnLeft(90 + probe_angle_deg)
+            return 0.0
+        tan_beta = ((R_neg - R_pos) / sum_R) / math.tan(theta_rad)
+        beta_deg = math.degrees(math.atan(tan_beta))
 
         if abs(beta_deg) > max_correction_deg:
-            print(f"[align] β={beta_deg:.1f}° exceeds cap ({max_correction_deg}°); "
-                  f"skipping. R_perp={R_perp:.1f}, R_forward={R_forward:.1f}")
-            self.turnLeft(90 - probe_angle_deg)  # restore original heading
+            print(f"[align] β={beta_deg:.1f}° exceeds cap "
+                  f"({max_correction_deg}°); skipping. "
+                  f"R_perp={R_perp:.1f}, R_pos={R_pos:.1f}, R_neg={R_neg:.1f}")
+            self.turnLeft(90 + probe_angle_deg)
             return 0.0
 
-        # Step 4: rotate to wall-parallel.
-        #   currently at internal heading = original − 90 + probe_angle (CCW)
-        #   target heading                = original + β
-        #   required CCW rotation         = 90 + β − probe_angle
-        correction = 90 + beta_deg - probe_angle_deg
+        # We're at -probe_angle from perpendicular-facing-wall.
+        # Target heading: +90 + β from perpendicular-facing-wall
+        #   (= wall-on-right + β tilt).
+        # Required CCW rotation: 90 + β + probe_angle.
+        correction = 90 + beta_deg + probe_angle_deg
         if correction >= 0:
             self.turnLeft(correction)
         else:
             self.turnRight(-correction)
-        print(f"[align] R_perp={R_perp:.1f} R_forward={R_forward:.1f} "
-              f"β={beta_deg:.1f}° → rotated by {beta_deg:.1f}°")
+        print(f"[align] R_perp={R_perp:.1f} R_pos={R_pos:.1f} "
+              f"R_neg={R_neg:.1f} β={beta_deg:.1f}°")
         return beta_deg
 
     def checkRight(self):
-        """Turns 90 degrees right to check if there is an obstacle there, then turns back. Used for hugging right wall"""
+        """Turns 90 degrees right to read the distance to the wall on the
+        right (used for mapping and for a close/far adjustment to maintain
+        a comfortable side distance), then aligns parallel to the wall on
+        the way back to forward-following — so any drift accumulated since
+        the last alignment is corrected continuously, every step."""
         self.turnRight(90)
         dist = self._finch.getDistance()
         wall_position = self.returnWallPosition(dist) # Get position of wall on the right for mapping purposes
@@ -472,7 +498,11 @@ class RoomFinch:
             print(f"Wall too far on the right at {self.getPosition()}, moving forward to find wall")
             self.moveForward(10)
         
-        self.turnLeft(90)
+        # Already facing the wall: align in place rather than blindly
+        # unwinding with a hardcoded 90° left turn. alignParallelToRightWall
+        # re-reads R_perp first since the close/far adjustment above may
+        # have moved us, and ends with the wall on the right + parallel.
+        self.alignParallelToRightWall(assume_facing_wall=True)
         return dist, wall_position
 
     def recordSensors(self):
