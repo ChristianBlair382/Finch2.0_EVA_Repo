@@ -43,7 +43,7 @@ def scan_anchor(finch: RoomFinch):
     return anchor_position
 
 
-def navigateRoom(finch: RoomFinch):
+def navigateRoom(finch: RoomFinch, running_event):
     """Navigates the room, minimizing turns"""
     RoomMapManager = Room_Map(finch)
     with open('anchors.csv', 'w', newline='') as csvfile: # Clear the anchors csv file at the start of navigation
