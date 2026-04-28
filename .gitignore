@@ -49,6 +49,9 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+test_heading.py
+test_pid.py
+anchors.csv
 
 # Translations
 *.mo

@@ -1,10 +1,11 @@
 from Lib.RoomFinch import RoomFinch
 from RoomNav import navigateRoom, manualOverride
 
-
 def main():
     USE_PID = True
     finch = RoomFinch('A', usePID = USE_PID)  # Initialize Finch on port A
+
+    finch.stop()  # Ensure Finch is stopped before starting
 
     print("=== Room Mapping Finch ===")
     print("1 - Manual Control")

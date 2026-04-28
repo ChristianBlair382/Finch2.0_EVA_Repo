@@ -55,14 +55,20 @@ class RoomFinch:
         self._scanning_event = threading.Event() # Event to signal when scanning is active
 
         # ===== PID setup =====
-        # Internal heading uses CCW-positive convention; compass uses CW-positive.
-        # We capture the initial compass reading and convert via:
-        #   internal_heading = (initialCompass - currentCompass) % 360
-        # This anchors the internal "0 = initial forward" frame to the real-world compass.
+        # Internal heading uses CCW-positive convention; the heading source
+        # (encoder-based) uses CW-positive. We capture the initial heading
+        # source reading and convert via:
+        #   internal_heading = (initialHeading - currentHeading) % 360
+        # This anchors the internal "0 = initial forward" frame to the
+        # heading source's reference.
         self._usePID = usePID
         if usePID:
             self._pid = PIDFinchController(self._finch)
-            self._initialCompass = self._finch.getCompass()
+            # Initialize from the PID's heading source (EncoderHeading)
+            # rather than the compass, since compass is unreliable on this
+            # hardware. EncoderHeading starts at 0 by default, but read()
+            # once to make the convention explicit.
+            self._initialCompass = self._pid.getAverageHeading()
         else:
             self._pid = None
             self._initialCompass = None
@@ -76,22 +82,22 @@ class RoomFinch:
         restarting."""
         if usePID and self._pid is None:
             self._pid = PIDFinchController(self._finch)
-            self._initialCompass = self._finch.getCompass()
+            self._initialCompass = self._pid.getAverageHeading()
         self._usePID = usePID
 
     def _compassToHeading(self, compass):
-        """Convert an absolute compass reading (CW-positive, 0-359) to the
-        internal heading frame (CCW-positive, 0 = initial forward)."""
+        """Convert an absolute heading source reading (CW-positive, 0-359)
+        to the internal heading frame (CCW-positive, 0 = initial forward)."""
         return (self._initialCompass - compass) % 360
 
     def _headingToCompass(self, heading):
-        """Convert an internal heading to its corresponding absolute compass
-        target (the compass value the robot should be reading when pointing
-        in that internal heading)."""
+        """Convert an internal heading to its corresponding absolute heading
+        source target (the value the heading source should read when
+        pointing in that internal heading)."""
         return (self._initialCompass - heading) % 360
 
     def _syncHeadingFromCompass(self):
-        """Read the current (averaged) compass and update self.heading.
+        """Read the current heading source and update self.heading.
         Call after any PID-driven turn to keep the internal heading in
         sync with reality."""
         self.heading = self._compassToHeading(self._pid.getAverageHeading())
@@ -108,8 +114,9 @@ class RoomFinch:
         self.recordSensors()  # Record sensors before movement to capture conditions leading to movement
 
         if self._usePID:
-            # driveStraight returns actual cm traveled (from encoders).
-            # Lock onto current heading so the robot drives a true straight line.
+            # driveStraight returns actual cm traveled (signed: positive
+            # forward, negative reverse). Lock onto current heading so the
+            # robot drives a true straight line.
             targetCompass = self._headingToCompass(self.heading)
             actual = self._pid.driveStraight(distance, targetHeading=targetCompass)
             rad = math.radians(self.heading)
@@ -195,8 +202,11 @@ class RoomFinch:
 
         Returns True if stopped by obstacle, False if stopped by distance.
         """
-        self._finch.resetEncoders()
-        time.sleep(0.25)
+        # Reset encoders for distance tracking, AND resync the heading
+        # tracker so it doesn't see this reset as a phantom rotation.
+        # Order matters: reset+resync first, THEN prime heading hold,
+        # otherwise the prime captures stale state.
+        self._pid._resetEncodersAndResync()
         self._pid.primeForHeadingHold()
         targetCompass = self._headingToCompass(self.heading)
 
@@ -206,18 +216,22 @@ class RoomFinch:
         stopped_by_obstacle = False
 
         while True:
-            # --- update position incrementally from encoders ---
+            # --- update position incrementally from signed encoders ---
+            # Use signed values: forward motion gives positive deltas,
+            # reverse gives negative. The += accumulates correctly in
+            # either direction.
             leftRot  = self._finch.getEncoder('L')
             rightRot = self._finch.getEncoder('R')
-            traveled = ((abs(leftRot) + abs(rightRot)) / 2.0
+            traveled = ((leftRot + rightRot) / 2.0
                         * self._pid.WHEEL_CIRCUMFERENCE_CM)
             delta = traveled - last_traveled
-            if delta > 0:
-                self.x_position += delta * math.cos(rad)
-                self.y_position += delta * math.sin(rad)
-                last_traveled = traveled
+            self.x_position += delta * math.cos(rad)
+            self.y_position += delta * math.sin(rad)
+            last_traveled = traveled
 
             # --- distance limit check ---
+            # For forward cruises, traveled grows positive toward max_distance.
+            # max_distance is None for moveForwardUntilWall (no upper bound).
             if max_distance is not None and traveled >= max_distance:
                 self._finch.stop()
                 break
@@ -252,7 +266,8 @@ class RoomFinch:
             targetCompass = self._headingToCompass(self.heading)
             actual = self._pid.driveStraight(-distance, targetHeading=targetCompass)
             rad = math.radians(self.heading)
-            # actual is signed: negative means moved backward
+            # actual is signed: negative for reverse motion, so += correctly
+            # moves position backward along the heading vector
             self.x_position += actual * math.cos(rad)
             self.y_position += actual * math.sin(rad)
         else:
@@ -273,7 +288,6 @@ class RoomFinch:
             self._finch.setTurn('L', angle * self.turnScale, self.ROTATION_SPEED)
             self.heading = (self.heading + angle) % 360
 
-
     def turnRight(self, angle=90):
         """Turn right and update heading. Internal heading -= angle."""
         if self._usePID and angle >= self.PID_TURN_FALLBACK_ANGLE:
@@ -284,7 +298,7 @@ class RoomFinch:
         else:
             self._finch.setTurn('R', angle * self.turnScale, self.ROTATION_SPEED)
             self.heading = (self.heading - angle) % 360
-            
+
     def turnToHeading(self, target_heading_internal):
         """PID-only convenience: turn to an absolute internal heading
         (e.g. one of the four cardinal directions captured at start of nav).

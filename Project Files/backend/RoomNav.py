@@ -143,7 +143,9 @@ def navigateRoom(finch: RoomFinch):
             RoomMapManager.add_anchor()
             print(f"Obstacle detected ahead at {finch.getPosition()}, turning left to next cardinal")
             cardinal_idx = (cardinal_idx + 1) % 4
+            print(f"[nav] inward corner. cardinal_idx -> {cardinal_idx}, "f"target={cardinals[cardinal_idx]:.1f}")
             finch.turnToHeading(cardinals[cardinal_idx])
+            print(f"[nav] post-turn position: {finch.getPosition()}")
             continue
 
         right_distance, wall_position = finch.checkRight()
