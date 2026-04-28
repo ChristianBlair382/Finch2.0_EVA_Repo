@@ -30,7 +30,8 @@ ChartJS.register(
 );
 
 // Backend URL (Uses environment variable if available, otherwise defaults to localhost)
-const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:5000";
+const backendUrl =
+  import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:5000";
 
 // Create socket connection to backend
 const socket = io(backendUrl);
@@ -44,14 +45,24 @@ type Position = {
 // Type for room grid (Makes a 2D array of numbers)
 type Grid = number[][];
 
-// Manual commands
-type Command = "start" | "stop" | "reset";
+// Commands sent to backend
+type Command =
+  | "start"
+  | "stop"
+  | "reset"
+  | "scan_anchor"
+  | "up"
+  | "down"
+  | "left"
+  | "right";
 
 // Expected data from backend map updates
 interface MapUpdatePayload {
   grid: Grid;
-  finch: Position;
+  robot: Position;
   path: Position[];
+  temperature: number;
+  light: number;
 }
 
 // Expected status update format
@@ -64,17 +75,24 @@ function App() {
   // Stores room map grid
   const [grid, setGrid] = useState<Grid>([]);
 
-  // Stores finch position
-  const [finch, setfinch] = useState<Position>({
+  // Stores robot position
+  const [robot, setRobot] = useState<Position>({
     x: 0,
     y: 0,
   });
 
-  // Stores finch path history
+  // Stores robot path history
   const [path, setPath] = useState<Position[]>([]);
 
   // Stores connection status
   const [status, setStatus] = useState("Disconnected");
+
+  // Stores navigation mode
+  const [mode, setMode] = useState("automatic");
+
+  // Stores sensor data
+  const [temperature, setTemperature] = useState(0);
+  const [light, setLight] = useState(0);
 
   // Runs once when page loads
   useEffect(() => {
@@ -92,8 +110,12 @@ function App() {
     socket.on("map_update", (data: MapUpdatePayload) => {
       // Update frontend data
       setGrid(data.grid);
-      setfinch(data.finch);
+      setRobot(data.robot);
       setPath(data.path);
+
+      // Update sensor values
+      setTemperature(data.temperature);
+      setLight(data.light);
     });
 
     // Listen for status messages
@@ -101,7 +123,7 @@ function App() {
       setStatus(data.status);
     });
 
-    // Cleanup socket when itloses
+    // Cleanup socket when it closes
     return () => {
       socket.off();
     };
@@ -123,6 +145,9 @@ function App() {
           x: point.x,
           y: point.y,
         })),
+
+        // Connect points with lines
+        showLine: true,
       },
     ],
   };
@@ -145,35 +170,114 @@ function App() {
           <p>{status}</p>
         </div>
 
-        {/* Finch telemetry */}
+        {/* Robot telemetry */}
         <div className="panel telemetry-panel">
-          <h2>finch Telemetry</h2>
+          <h2>Robot Telemetry</h2>
 
-          <p>X: {finch.x}</p>
-          <p>Y: {finch.y}</p>
+          <p>X: {robot.x}</p>
+          <p>Y: {robot.y}</p>
 
           {/* Total positions traveled */}
           <p>Path Points: {path.length}</p>
+
+          {/* Temperature sensor */}
+          <p>Temperature: {temperature}°C</p>
+
+          {/* Light sensor */}
+          <p>Light Level: {light}</p>
         </div>
 
         {/* Finch controls */}
         <div className="panel controls-panel">
           <h2>Controls</h2>
 
-          {/* Start finch */}
-          <button onClick={() => sendCommand("start")}>
-            Start
+          {/* Select automatic mode */}
+          <button onClick={() => setMode("automatic")}>
+            Automatic Navigation
           </button>
 
-          {/* Stop finch */}
-          <button onClick={() => sendCommand("stop")}>
-            Stop
+          {/* Select manual mode */}
+          <button onClick={() => setMode("manual")}>
+            Manual Navigation
           </button>
 
-          {/* Reset map */}
-          <button onClick={() => sendCommand("reset")}>
-            Reset
-          </button>
+          {/* Automatic navigation controls */}
+          {mode === "automatic" && (
+            <>
+              {/* Start finch */}
+              <button onClick={() => sendCommand("start")}>
+                Start
+              </button>
+
+              {/* Stop finch */}
+              <button onClick={() => sendCommand("stop")}>
+                Stop
+              </button>
+
+              {/* Reset map */}
+              <button onClick={() => sendCommand("reset")}>
+                Reset
+              </button>
+            </>
+          )}
+
+          {/* Manual navigation controls */}
+          {mode === "manual" && (
+            <div className="manual-controls">
+
+              {/* Scan anchor button */}
+              <button
+                onClick={() => sendCommand("scan_anchor")}
+              >
+                Scan Anchor
+              </button>
+
+              {/* Arrow Buttons */}
+              <div className="arrow-row">
+                <button
+                  className="arrow-key"
+                  onClick={() =>
+                    sendCommand("up")
+                  }
+                >
+                  ↑
+                </button>
+              </div>
+
+              <div className="arrow-row">
+                <button
+                  className="arrow-key"
+                  onClick={() =>
+                    sendCommand("left")
+                  }
+                >
+                  ←
+                </button>
+
+                <button
+                  className="arrow-key"
+                  onClick={() =>
+                    sendCommand("down")
+                  }
+                >
+                  ↓
+                </button>
+
+                <button
+                  className="arrow-key"
+                  onClick={() =>
+                    sendCommand("right")
+                  }
+                >
+                  →
+                </button>
+              </div>
+              <p>
+                Use buttons to move Finch
+                and scan anchors
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Grid map */}
@@ -184,7 +288,6 @@ function App() {
 
             {/* Loop through rows */}
             {grid.map((row, y) => (
-
               <div key={y} className="grid-row">
 
                 {/* Loop through cells */}
@@ -208,10 +311,10 @@ function App() {
 
                   // Finch position
                   if (
-                    finch.x === x &&
-                    finch.y === y
+                    robot.x === x &&
+                    robot.y === y
                   ) {
-                    cellClass += " finch";
+                    cellClass += " robot";
                   }
 
                   // Draw cell

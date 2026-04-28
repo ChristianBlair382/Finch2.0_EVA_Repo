@@ -61,6 +61,50 @@ body {
   background: #0284c7;
 }
 
+/* Manual controls container */
+.manual-controls {
+  margin-top: 20px;
+}
+
+/* Row for arrow keys */
+.arrow-row {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+/* Arrow key button styling */
+.arrow-key {
+  width: 55px;
+  height: 55px;
+  padding: 0;
+  font-size: 24px;
+  font-weight: bold;
+  background: #0ea5e9;
+  border: 2px solid #334155;
+  border-radius: 10px;
+  color: white;
+  cursor: pointer;
+}
+
+/* Arrow key hover effect */
+.arrow-key:hover {
+  background: #0284c7;
+}
+
+/* Arrow key click effect */
+.arrow-key:active {
+  transform: scale(0.95);
+}
+
+/* Manual mode instructions text */
+.manual-controls p {
+  margin-top: 15px;
+  font-size: 14px;
+  color: #cbd5e1;
+}
+
 /* Grid container */
 .grid-container {
   display: inline-block;
@@ -90,7 +134,7 @@ body {
 }
 
 /* Finch cell */
-.finch {
+.robot {
   background: #f43f5e;
 }
 
