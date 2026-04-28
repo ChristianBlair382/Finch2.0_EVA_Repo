@@ -3,7 +3,7 @@ from RoomNav import navigateRoom, manualOverride
 
 
 def main():
-    finch = RoomFinch('B')  # Initialize Finch on port B
+    finch = RoomFinch('A')  # Initialize Finch on port B
 
     print("=== Room Mapping Finch ===")
     print("1 - Manual Control")

@@ -1,7 +1,5 @@
 from Lib.RoomFinch import RoomFinch
 from Lib.RoomMap import Room_Map
-import keyboard
-import threading
 import csv
 import time
 
@@ -18,62 +16,34 @@ def searchForCorner(finch: RoomFinch):
     closest_walls = list(closest_points.values())[:2]
     return closest_walls[0], closest_walls[1]
 
-def manualOverride(finch: RoomFinch):
-    """Manual control using step-based movement for more consistent coordinate updates."""
-    print("\n--- MANUAL OVERRIDE MODE ---")
-    print("W = Forward | S = Backward | A = Turn Left | D = Turn Right | SPACE = Set Anchor | Q = Exit\n")
+#Manual movement for frontend
+def move_up(finch: RoomFinch):
+    finch.moveForward(10)
 
-    keyboard.block_key('w')
-    keyboard.block_key('a')
-    keyboard.block_key('s')
-    keyboard.block_key('d')
-    keyboard.block_key('space')
-    keyboard.block_key('q')
+def move_down(finch: RoomFinch):
+    finch.moveBackward(10)
+        
+def move_left(finch: RoomFinch):
+    finch.turnLeft(15)
 
-    room_map_manager = Room_Map(finch)
-    with open('anchors.csv', 'w', newline='') as csvfile:
+def move_right(finch: RoomFinch):
+    finch.turnRight(15)
+
+def scan_anchor(finch: RoomFinch):
+    """Scan obstacle and store anchor coordinates in CSV"""
+    dist = finch.scanObstacle()
+    anchor_position = finch.returnWallPosition(dist)
+
+    with open('anchors.csv', 'a', newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(['x', 'y'])
+        writer.writerow([anchor_position[0], anchor_position[1]])
 
-    space_was_pressed = False
+    print(f"Anchor stored at {anchor_position}")
 
-    while True:
-        if keyboard.is_pressed('a'):
-            finch.turnLeft(90)
-        elif keyboard.is_pressed('d'):
-            finch.turnRight(90) # Tuned to 100 degrees to account for error in turning and to better align with walls when manually navigating
-        elif keyboard.is_pressed('w'):
-            finch.moveForward(10)
-        elif keyboard.is_pressed('s'):
-            finch.moveBackward(10)
-        elif keyboard.is_pressed('q'):
-            print("\nExiting manual override mode.\n")
-            for i in range(0, 3):
-                finch.playBeep(70, 1)  # Beep to indicate exiting manual mode
-                finch.setBeakColor(0, 128, 0)  # Set beak LED to green to indicate manual mode exit
-                time.sleep(0.5)
-                finch.setBeakColor(0, 0, 0)  # Set beak LED back to blue (default)
-            finch.stop()
-            break
+    return anchor_position
 
-        space_pressed = keyboard.is_pressed('space')
-        if space_pressed and not space_was_pressed:
-            x, y, _ = finch.getPosition()
-            room_map_manager.add_anchor_at_position((x, y))
-            print(f"Anchor added at {(x, y)}")
-        space_was_pressed = space_pressed
 
-        time.sleep(0.02)
-#overrideFlag = False
-#This will be replaced by frontend socketio in the future
-#def checkForOverride():
-#    """Checks for user input to override navigation and enter manual mode"""
-#    global overrideFlag
-#    keyboard.wait("m")  # Wait until "m" is pressed
-#    print("Manual override activated, entering manual mode")
-#    overrideFlag = True
-
-def navigateRoom(finch: RoomFinch):
+def navigateRoom(finch: RoomFinch, running_event):
     """Navigates the room, minimizing turns"""
     RoomMapManager = Room_Map(finch)
     with open('anchors.csv', 'w', newline='') as csvfile: # Clear the anchors csv file at the start of navigation
@@ -84,7 +54,6 @@ def navigateRoom(finch: RoomFinch):
     RETURN_THRESHOLD = 20  # Distance threshold to consider as returning to start
     STEP_THRESHOLD = 6    # Minimum steps before allowing return to start condition
     steps = 0
-    overrideFlag = False
     finch.setBeakColor(0, 0, 255)  # Set beak LED to blue (starting state)
     # Finch approaches first wall
     print("Approaching first wall...")
@@ -99,7 +68,7 @@ def navigateRoom(finch: RoomFinch):
     #overrideThread = threading.Thread(target=checkForOverride)
     #overrideThread.daemon = True  # Daemonize thread to exit when main program exits
     #overrideThread.start()
-    while not overrideFlag:
+    while running_event.is_set():
         steps += 1
         pos = finch.getPosition()
         # Check with the threshold to account for error in estimation for if the finch has returned to starting position
@@ -125,8 +94,6 @@ def navigateRoom(finch: RoomFinch):
             RoomMapManager.add_anchor_at_position(p1)
             RoomMapManager.add_anchor_at_position(p2)
 
-    if overrideFlag:
-        manualOverride(finch)
     finch.setBeakColor(0, 255, 0)  # Green beak LED to indicate completion
     finch.playSuccessSound()  # Play success melody
 

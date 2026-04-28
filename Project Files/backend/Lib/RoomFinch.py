@@ -1,4 +1,4 @@
-from BirdBrain import Finch as BirdBrainFinch
+from .BirdBrain import Finch as BirdBrainFinch
 import math
 import keyboard
 import threading
