@@ -3,7 +3,7 @@ from RoomNav import navigateRoom, ManualController
 
 def main():
     USE_PID = True
-    finch = RoomFinch('B', usePID = USE_PID)  # Initialize Finch on port A
+    finch = RoomFinch('A', usePID = USE_PID)  # Initialize Finch on port A
 
     finch.stop()  # Ensure Finch is stopped before starting
 
