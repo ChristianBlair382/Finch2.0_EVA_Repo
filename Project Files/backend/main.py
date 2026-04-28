@@ -1,12 +1,11 @@
 from Lib.RoomFinch import RoomFinch
-from RoomNav import navigateRoom, manualOverride
+from RoomNav import navigateRoom, ManualController
 
 def main():
     USE_PID = True
-    finch = RoomFinch('A', usePID = USE_PID)  # Initialize Finch on port A
+    finch = RoomFinch('B', usePID = USE_PID)  # Initialize Finch on port A
 
     finch.stop()  # Ensure Finch is stopped before starting
-    finch.setBeakColor(0,0,0)
 
     print("=== Room Mapping Finch ===")
     print("1 - Manual Control")
@@ -15,12 +14,27 @@ def main():
     choice = input("Select mode: ").strip()
 
     if choice == "1":
-        manualOverride(finch)
+        # Manual control is now driven by the frontend over SocketIO; this
+        # path just instantiates the controller and idles. When a frontend
+        # is wired up, this is where you'd start the Flask-SocketIO server
+        # and bind controller methods to socket events.
+        controller = ManualController(finch)
+        print("\nManual mode active (no frontend wired up — use Ctrl-C to exit).")
+        print("Available commands on the controller object:")
+        print("  forward(), backward(), left(), right(), stop(),")
+        print("  scan_anchor(), anchor_at_robot_position(), shutdown()")
+        try:
+            while True:
+                # Idle. Frontend (or attached REPL) drives controller methods.
+                import time
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            controller.shutdown()
 
     elif choice == "2":
-        # Not needed, using PID
-        # calibrate = input("Calibrate for floor surface? (y/n): ").strip().lower()
-        # if calibrate == "y":
+        #calibrate = input("Calibrate for floor surface? (y/n): ").strip().lower()
+
+        #if calibrate == "y":
         #    print("\nPlace the finch facing a wall, then press Enter to start calibration.")
         #    input()
         #    finch.calibrateFloor()
