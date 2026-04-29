@@ -107,6 +107,13 @@ function App() {
   const [temperature, setTemperature] = useState(0);
   const [light, setLight] = useState(0);
 
+  // Tracks whether the surface-tuning warning at the bottom of the
+  // Controls panel should still be visible. Starts true on every page
+  // load (the warning is a pre-flight reminder), and flips to false the
+  // first time the user interacts with any control button — at that
+  // point they've acknowledged it by acting.
+  const [showSurfaceWarning, setShowSurfaceWarning] = useState(true);
+
   // Runs once when page loads
   useEffect(() => {
     // Listen for backend connection
@@ -150,6 +157,7 @@ function App() {
   // Send commands to backend
   const sendCommand = (cmd: Command) => {
     socket.emit("command", cmd);
+    setShowSurfaceWarning(false);
   };
 
   // Hidden file input — triggered by the Load Map button. Kept in a ref
@@ -159,6 +167,7 @@ function App() {
   // Open the OS file picker. The actual upload happens in onFileSelected.
   const handleLoadMapClick = () => {
     fileInputRef.current?.click();
+    setShowSurfaceWarning(false);
   };
 
   // Serialize the live map (path + anchors, both in cm) to JSON and
@@ -168,6 +177,7 @@ function App() {
   // session doesn't clobber. Lands in the user's default Downloads
   // folder; no backend involvement.
   const handleSaveMapClick = () => {
+    setShowSurfaceWarning(false);
     const payload = {
       path: rawPath,
       anchors: anchors,
@@ -290,12 +300,22 @@ function App() {
           <h2>Controls</h2>
 
           {/* Select automatic mode */}
-          <button onClick={() => setMode("automatic")}>
+          <button
+            onClick={() => {
+              setMode("automatic");
+              setShowSurfaceWarning(false);
+            }}
+          >
             Automatic Navigation
           </button>
 
           {/* Select manual mode */}
-          <button onClick={() => setMode("manual")}>
+          <button
+            onClick={() => {
+              setMode("manual");
+              setShowSurfaceWarning(false);
+            }}
+          >
             Manual Navigation
           </button>
 
@@ -397,6 +417,32 @@ function App() {
                 and scan anchors
               </p>
             </div>
+          )}
+
+          {/* Surface-tuning warning — applies to both auto and manual,
+              so it lives outside the conditional blocks above. Carpet,
+              hardwood, tile, etc. all have different traction
+              characteristics that affect PID gains and turn scale.
+              Detailed tuning steps live in the backend README. The
+              warning auto-dismisses on the first control press; users
+              who want it back can refresh the page. */}
+          {showSurfaceWarning && (
+            <>
+              <p
+                className="surface-warning"
+                style={{ color: "#b58900", fontWeight: 600 }}
+              >
+                ⚠ Please tune the Finch according to the surface it is on before running.
+              </p>
+              <p
+                className="surface-warning-details"
+                style={{ color: "#b58900", fontSize: "0.85em", marginTop: "-0.4em" }}
+              >
+                See the <em>Tuning</em> section in{" "}
+                <code>Project Files/backend/README.md</code> — covers wheelbase,
+                turn scale, PID gains (Kp/Ki/Kd), and more.
+              </p>
+            </>
           )}
         </div>
 

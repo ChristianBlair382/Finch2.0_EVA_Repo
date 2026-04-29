@@ -87,7 +87,7 @@ class ManualController:
     def scan_anchor(self):
         """Take a front-distance reading and project it to a wall coordinate,
         then add to the map. This is the wall-projection version (matches
-        auto nav) — *not* the robot's own position. To anchor the robot's
+        auto nav) — *not* the robot's own position, ahem ahem. To anchor the robot's
         position instead, use anchor_at_robot_position()."""
         self.room_map.add_anchor()
         last = self.room_map.anchorList[-1] if self.room_map.anchorList else None
@@ -144,7 +144,7 @@ def navigateRoom(finch: RoomFinch, stop_event=None):
         writer = csv.writer(csvfile)
         writer.writerow(['x', 'y'])  # Write header for clarity
     SIDE_WALL_DIST = 150  # Distance threshold to consider the side an outside corner
-    BIG_STEP = 60
+    BIG_STEP = 40
     RETURN_THRESHOLD = 20  # Distance threshold to consider as returning to start
     STEP_THRESHOLD = 6    # Minimum steps before allowing return to start condition
     steps = 0
@@ -154,7 +154,7 @@ def navigateRoom(finch: RoomFinch, stop_event=None):
     finch.playBeep(60, 1)  # Play beep to indicate start
     finch.moveForwardUntilWall()
     # Robot is now facing the wall. Skip turnLeft(90) and align directly
-    # — the alignment routine already does a CCW 90° + β rotation in
+    # — the alignment routine already does a CCW 90° + B rotation in
     # assume_facing_wall mode, so the wall ends up on the right and we
     # avoid two wasted turns.
     finch.alignParallelToRightWall(assume_facing_wall=True)

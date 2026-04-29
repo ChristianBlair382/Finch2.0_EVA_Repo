@@ -212,7 +212,7 @@ class PIDFinchController:
         # vs actual chassis rotation by ~12%; a larger effective wheelbase
         # makes the kinematic formula report less heading change per encoder
         # tick, cancelling the over-count.
-        self._compass = compassAverage or EncoderHeading(finch, wheelbase_cm=10.5)
+        self._compass = compassAverage or EncoderHeading(finch, wheelbase_cm=11.8)
 
         self._headingState = self._freshState()
         self._turnState    = self._freshState()
