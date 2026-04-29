@@ -210,3 +210,6 @@ __marimo__/
 
 # Node modules
 node_modules/
+room_map.json
+Project Files/frontend/path.csv
+path.csv
