@@ -49,6 +49,9 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+test_heading.py
+test_pid.py
+anchors.csv
 
 # Translations
 *.mo
@@ -207,3 +210,6 @@ __marimo__/
 
 # Node modules
 node_modules/
+room_map.json
+Project Files/frontend/path.csv
+path.csv

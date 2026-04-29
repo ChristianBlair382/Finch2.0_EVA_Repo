@@ -1,5 +1,5 @@
 // Import React (stores changing data, runs code when component loads/updates)
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Import Socket.IO client so frontend can talk to backend
 import { io } from "socket.io-client";
@@ -61,6 +61,12 @@ interface MapUpdatePayload {
   grid: Grid;
   robot: Position;
   path: Position[];
+  // raw_path is the same trajectory as path but in centimeters (the path
+  // field is clamped to the 20x20 grid for the grid panel). The chart
+  // uses raw_path so it shares a coordinate scale with anchors.
+  raw_path: Position[];
+  // anchors mirrors anchors.csv on the backend — wall positions in cm.
+  anchors: Position[];
   temperature: number;
   light: number;
 }
@@ -81,8 +87,15 @@ function App() {
     y: 0,
   });
 
-  // Stores robot path history
+  // Stores robot path history (grid coordinates, used by the grid panel)
   const [path, setPath] = useState<Position[]>([]);
+
+  // Stores robot path history in centimeters (used by the room-map chart
+  // so it shares a coordinate scale with the anchors).
+  const [rawPath, setRawPath] = useState<Position[]>([]);
+
+  // Stores wall anchors streamed from the backend (mirror of anchors.csv).
+  const [anchors, setAnchors] = useState<Position[]>([]);
 
   // Stores connection status
   const [status, setStatus] = useState("Disconnected");
@@ -93,6 +106,13 @@ function App() {
   // Stores sensor data
   const [temperature, setTemperature] = useState(0);
   const [light, setLight] = useState(0);
+
+  // Tracks whether the surface-tuning warning at the bottom of the
+  // Controls panel should still be visible. Starts true on every page
+  // load (the warning is a pre-flight reminder), and flips to false the
+  // first time the user interacts with any control button — at that
+  // point they've acknowledged it by acting.
+  const [showSurfaceWarning, setShowSurfaceWarning] = useState(true);
 
   // Runs once when page loads
   useEffect(() => {
@@ -113,6 +133,11 @@ function App() {
       setRobot(data.robot);
       setPath(data.path);
 
+      // raw_path / anchors may be missing on older backends — default
+      // to [] so the chart renders cleanly during the rollout.
+      setRawPath(data.raw_path ?? []);
+      setAnchors(data.anchors ?? []);
+
       // Update sensor values
       setTemperature(data.temperature);
       setLight(data.light);
@@ -132,22 +157,105 @@ function App() {
   // Send commands to backend
   const sendCommand = (cmd: Command) => {
     socket.emit("command", cmd);
+    setShowSurfaceWarning(false);
   };
 
-  // Chart data (Converts path into x,y points)
+  // Hidden file input — triggered by the Load Map button. Kept in a ref
+  // so we can call .click() programmatically from the visible button.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Open the OS file picker. The actual upload happens in onFileSelected.
+  const handleLoadMapClick = () => {
+    fileInputRef.current?.click();
+    setShowSurfaceWarning(false);
+  };
+
+  // Serialize the live map (path + anchors, both in cm) to JSON and
+  // trigger a browser download. The file format matches what the backend
+  // writes to room_map.json, so a Save Map → Load Map round-trip is
+  // lossless. Filename gets a timestamp so saving multiple maps in one
+  // session doesn't clobber. Lands in the user's default Downloads
+  // folder; no backend involvement.
+  const handleSaveMapClick = () => {
+    setShowSurfaceWarning(false);
+    const payload = {
+      path: rawPath,
+      anchors: anchors,
+    };
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    // Timestamp like 2026-04-28T17-32-09 — colons stripped because they
+    // are illegal in Windows filenames.
+    const stamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .replace(/T/, "_")
+      .slice(0, 19);
+    const filename = `room_map_${stamp}.json`;
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    setStatus(`Saved ${filename}`);
+  };
+
+  // Read the selected JSON, parse it, and ship the {path, anchors} to the
+  // backend via the new 'load_map' socket event. Backend will replace its
+  // state and emit a map_update so the chart re-renders.
+  const onFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = reader.result as string;
+        const parsed = JSON.parse(text);
+        socket.emit("load_map", {
+          path: parsed.path ?? [],
+          anchors: parsed.anchors ?? [],
+        });
+      } catch (e) {
+        setStatus(`Failed to parse map file: ${(e as Error).message}`);
+      }
+    };
+    reader.onerror = () => setStatus("Failed to read map file");
+    reader.readAsText(file);
+    // Reset so re-selecting the same filename still triggers onChange.
+    event.target.value = "";
+  };
+
+  // Chart data — two datasets in the same cm-scale coordinate space:
+  //   1. Finch Path: connected line of poses from raw_path
+  //   2. Wall Anchors: standalone points from the backend's anchors stream
+  // Together they form a live room map.
   const chartData = {
     datasets: [
       {
         label: "Finch Path",
-
-        // Convert path array into chart points
-        data: path.map((point) => ({
-          x: point.x,
-          y: point.y,
-        })),
-
-        // Connect points with lines
+        data: rawPath.map((point) => ({ x: point.x, y: point.y })),
         showLine: true,
+        borderColor: "rgba(54, 162, 235, 0.8)",
+        backgroundColor: "rgba(54, 162, 235, 0.5)",
+        pointRadius: 2,
+      },
+      {
+        label: "Wall Anchors",
+        data: anchors.map((point) => ({ x: point.x, y: point.y })),
+        // Connect anchors in the order they're recorded — navigateRoom
+        // and searchForCorner deliberately keep them in traversal order
+        // (see comment in RoomNav.searchForCorner) so the polyline traces
+        // the room outline rather than zig-zagging.
+        showLine: true,
+        borderColor: "rgba(255, 99, 132, 1)",
+        backgroundColor: "rgba(255, 99, 132, 1)",
+        pointRadius: 5,
       },
     ],
   };
@@ -172,7 +280,7 @@ function App() {
 
         {/* Robot telemetry */}
         <div className="panel telemetry-panel">
-          <h2>Robot Telemetry</h2>
+          <h2>Telemetry</h2>
 
           <p>X: {robot.x}</p>
           <p>Y: {robot.y}</p>
@@ -192,14 +300,46 @@ function App() {
           <h2>Controls</h2>
 
           {/* Select automatic mode */}
-          <button onClick={() => setMode("automatic")}>
+          <button
+            onClick={() => {
+              setMode("automatic");
+              setShowSurfaceWarning(false);
+            }}
+          >
             Automatic Navigation
           </button>
 
           {/* Select manual mode */}
-          <button onClick={() => setMode("manual")}>
+          <button
+            onClick={() => {
+              setMode("manual");
+              setShowSurfaceWarning(false);
+            }}
+          >
             Manual Navigation
           </button>
+
+          {/* Save the live map (path + anchors) as a JSON file to
+              the browser's default download location. */}
+          <button onClick={handleSaveMapClick}>
+            Save Map
+          </button>
+
+          {/* Load a previously saved room_map.json (path + anchors). */}
+          <button onClick={handleLoadMapClick}>
+            Load Map
+          </button>
+          {/* No `accept` filter on purpose — Windows' file picker hides
+              non-matching files entirely (showing only folders) when the
+              filter is restrictive, which surprises users. We validate
+              the contents in onFileSelected instead, so any file can be
+              picked and the parser will report a clean error on bad JSON. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: "none" }}
+            onChange={onFileSelected}
+          />
 
           {/* Automatic navigation controls */}
           {mode === "automatic" && (
@@ -278,6 +418,32 @@ function App() {
               </p>
             </div>
           )}
+
+          {/* Surface-tuning warning — applies to both auto and manual,
+              so it lives outside the conditional blocks above. Carpet,
+              hardwood, tile, etc. all have different traction
+              characteristics that affect PID gains and turn scale.
+              Detailed tuning steps live in the backend README. The
+              warning auto-dismisses on the first control press; users
+              who want it back can refresh the page. */}
+          {showSurfaceWarning && (
+            <>
+              <p
+                className="surface-warning"
+                style={{ color: "#b58900", fontWeight: 600 }}
+              >
+                ⚠ Please tune the Finch according to the surface it is on before running.
+              </p>
+              <p
+                className="surface-warning-details"
+                style={{ color: "#b58900", fontSize: "0.85em", marginTop: "-0.4em" }}
+              >
+                See the <em>Tuning</em> section in{" "}
+                <code>Project Files/backend/README.md</code> — covers wheelbase,
+                turn scale, PID gains (Kp/Ki/Kd), and more.
+              </p>
+            </>
+          )}
         </div>
 
         {/* Grid map */}
@@ -330,9 +496,9 @@ function App() {
           </div>
         </div>
 
-        {/* Chart panel */}
+        {/* Chart panel — live room map: trajectory + wall anchors */}
         <div className="panel chart-panel">
-          <h2>Live Path Tracking</h2>
+          <h2>Live Room Map</h2>
 
           {/* Draw chart */}
           <Scatter data={chartData} />

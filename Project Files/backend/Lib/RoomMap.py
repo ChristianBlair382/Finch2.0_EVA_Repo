@@ -5,6 +5,36 @@ import csv
 Anchor: TypeAlias = tuple[float, float] # an anchor is a tuple of x and y coordinates
 Line: TypeAlias = tuple[Anchor, Anchor] # a line is a tuple of two anchors
 
+
+# ---------------------------------------------------------------------------
+# Anchor notification (pub/sub)
+# ---------------------------------------------------------------------------
+# Module-level listener registry so every Room_Map instance broadcasts on the
+# same channel — both the auto-nav Room_Map (constructed inside navigateRoom)
+# and the ManualController's Room_Map need to push anchors to the same
+# Flask-SocketIO subscriber. Keeping it module-level avoids having to thread
+# a callback through both call sites.
+_anchor_listeners: list = []
+
+
+def register_anchor_listener(cb):
+    """Subscribe to wall-anchor additions.
+
+    The callback is invoked with the (x, y) anchor tuple AFTER the anchor
+    has been appended to the instance's anchorList and written to
+    anchors.csv. Exceptions inside listeners are caught and logged so a
+    misbehaving subscriber can't take down navigation.
+    """
+    _anchor_listeners.append(cb)
+
+
+def _notify_anchor(anchor: Anchor):
+    for cb in list(_anchor_listeners):
+        try:
+            cb(anchor)
+        except Exception as e:
+            print(f"[anchor listener] error: {e}")
+
 class Room_Map:
     # the finch object, used to get the current location of the finch and to update the location of the finch on the map
     finch_obj: RoomFinch
@@ -33,7 +63,7 @@ class Room_Map:
         self.finch_y = y
         self.finch_orientation = orientation
     
-    def add_anchor(self, dist = None): 
+    def add_anchor(self, dist = None):
         # adds an anchor to the map and sets its location to the current location of the finch
         if dist is None:
             anchor = self.finch_obj.returnWallPosition(self.finch_obj.scanObstacle()) # gets the current location of the finch and adds it as an anchor to the map
@@ -48,14 +78,16 @@ class Room_Map:
                 writer = csv.writer(csvfile)
                 writer.writerow(anchor)
         self.numOfAnchors += 1
+        _notify_anchor(anchor)  # let subscribers (e.g. the SocketIO layer) push live updates
 
-    def add_anchor_at_position(self, anchor: Anchor): 
+    def add_anchor_at_position(self, anchor: Anchor):
         # adds an anchor to the map at a specific position
         self.anchorList.append(anchor)
         with open('anchors.csv', 'a', newline='') as csvfile: # appends the new anchor to a csv file for storage
             writer = csv.writer(csvfile)
             writer.writerow(anchor)
         self.numOfAnchors += 1
+        _notify_anchor(anchor)
 
     def update_finch_location(self, x: float, y: float, orientation: float = 0): 
         # updates the current location of the finch on the map referencing the finch's actual location
