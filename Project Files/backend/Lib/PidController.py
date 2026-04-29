@@ -29,8 +29,8 @@ class CompassAverage:
 
     ========== NOT CURRENTLY USED ==========
     The Finch we're testing on has a broken/uncalibrated compass, so we use
-    EncoderHeading below instead. Kept here as a drop-in replacement if a
-    future Finch has a working compass — pass an instance via the
+    EncoderHeading below instead. Kept here as a better option if user has a 
+    Finch with a functioning compass — pass an instance via the
     compassAverage parameter of PIDFinchController.__init__.
     =======================================
     """
@@ -206,12 +206,13 @@ class PIDFinchController:
         self.verbose = True
 
         # Default heading source is encoder-based; pass compassAverage to override.
-        # Wheelbase 11.8 cm compensates for carpet wheel slip (was 10.5 cm on
-        # smoother surfaces). On carpet the encoders over-count wheel rotation
+        # Use wheelbase 11.8 cm to account for carpet slip
+        # Otherwise, default 10.5 cm wheelbase is optimal
+        # On carpet the encoders over-count wheel rotation
         # vs actual chassis rotation by ~12%; a larger effective wheelbase
         # makes the kinematic formula report less heading change per encoder
         # tick, cancelling the over-count.
-        self._compass = compassAverage or EncoderHeading(finch, wheelbase_cm=11.8)
+        self._compass = compassAverage or EncoderHeading(finch, wheelbase_cm=10.5)
 
         self._headingState = self._freshState()
         self._turnState    = self._freshState()
@@ -271,8 +272,7 @@ class PIDFinchController:
     def _setMotorsTracked(self, left, right):
         """Drive motors AND inform the heading tracker of the commanded
         direction. Always use this instead of self._finch.setMotors()
-        directly — for the current EncoderHeading the noteMotorCommand
-        call is a no-op, but a different heading source might need it."""
+        directly as a different heading source might need it."""
         if hasattr(self._compass, 'noteMotorCommand'):
             self._compass.noteMotorCommand(left, right)
         self._finch.setMotors(left, right)

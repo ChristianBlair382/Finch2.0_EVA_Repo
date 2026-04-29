@@ -113,7 +113,7 @@ class ManualController:
         self.finch.stop()
 
 
-def navigateRoom(finch: RoomFinch):
+def navigateRoom(finch: RoomFinch, stop_event=None):
     """Navigates the room using right-wall following.
 
     Strategy (assuming PID is enabled in RoomFinch):
@@ -129,7 +129,16 @@ def navigateRoom(finch: RoomFinch):
 
     With PID off, this still works but turns drift more, so the cardinal
     snap is less effective.
+
+    stop_event (optional threading.Event) lets a caller request an early
+    exit from the main loop. The loop checks it once per iteration, so
+    after the caller sets it the navigator finishes whatever motion is in
+    flight (or is interrupted by finch.stop()) and breaks out. Without it
+    navigateRoom is uninterruptible from outside, which is what the
+    Flask-SocketIO 'stop' / manual-override buttons need.
     """
+    def _should_stop():
+        return stop_event is not None and stop_event.is_set()
     RoomMapManager = Room_Map(finch)
     with open('anchors.csv', 'w', newline='') as csvfile: # Clear the anchors csv file at the start of navigation
         writer = csv.writer(csvfile)
@@ -163,6 +172,14 @@ def navigateRoom(finch: RoomFinch):
     #Record starting position
     start = finch.getPosition()
     while True:
+        # External stop request (e.g. frontend 'stop' button or any manual
+        # command coming through ManualController). Checked once per
+        # iteration; in-flight motion is interrupted by finch.stop() at the
+        # caller, so the worst-case latency is one BIG_STEP cruise.
+        if _should_stop():
+            print("Auto-nav stop signaled, exiting loop")
+            break
+
         steps += 1
         pos = finch.getPosition()
         # Check with the threshold to account for error in estimation for if the finch has returned to starting position
@@ -201,6 +218,15 @@ def navigateRoom(finch: RoomFinch):
             finch.alignParallelToRightWall()
 
     finch.stopTail()                  # Tail off — navigation complete
+
+    # Skip the completion fanfare if we were halted externally — a user
+    # who pressed 'stop' or grabbed manual control doesn't want a success
+    # melody and smile face pretending the room was finished.
+    if _should_stop():
+        finch.setBeakColor(0, 0, 255)  # Back to idle blue
+        print("\nNavigation halted by external stop request.")
+        return
+
     finch.setBeakColor(0, 255, 0)  # Green beak LED to indicate completion
     finch.playSuccessSound()  # Play success melody
 
@@ -211,7 +237,7 @@ def navigateRoom(finch: RoomFinch):
         [1, 0, 0, 0, 1],
         [0, 1, 1, 1, 0]
     ]
-        
+
     finch.displaySymbol(smile)  # Display smile face on 5x5 LED matrix
     print("\nRoom Data Summary")
     print(f"Average Temperature: {round(finch.getAverageTemperature(), 2)} °C")  # Display average temperature

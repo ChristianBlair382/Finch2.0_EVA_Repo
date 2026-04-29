@@ -16,8 +16,8 @@ def main():
     if choice == "1":
         # Manual control is now driven by the frontend over SocketIO; this
         # path just instantiates the controller and idles. When a frontend
-        # is wired up, this is where you'd start the Flask-SocketIO server
-        # and bind controller methods to socket events.
+        # is wired up, this is the point at which the Flask-SocketIO server
+        # would be started and controller methods bound to socket events.
         controller = ManualController(finch)
         print("\nManual mode active (no frontend wired up — use Ctrl-C to exit).")
         print("Available commands on the controller object:")
@@ -32,8 +32,8 @@ def main():
             controller.shutdown()
 
     elif choice == "2":
+        # Calibration is no longer needed with PID-based navigation.
         #calibrate = input("Calibrate for floor surface? (y/n): ").strip().lower()
-
         #if calibrate == "y":
         #    print("\nPlace the finch facing a wall, then press Enter to start calibration.")
         #    input()
@@ -45,6 +45,7 @@ def main():
         navigateRoom(finch)
 
     elif choice == "3":
+        # Leave untouched normally, only change if you know what you are doing
         scaleInput = input("Enter turn scale factor (e.g. 1.0 for default): ").strip()
         try:
             scale = float(scaleInput)

@@ -100,10 +100,7 @@ class RoomFinch:
             self._initialCompass = self._pid.getAverageHeading()
             # Stable encoder-frame anchor for forward heading-hold. Updated
             # only by turn primitives, so forward motion always locks onto
-            # the heading the most recent turn settled at — drift doesn't
-            # compound across moveForward calls. With turnScale != 1.0 this
-            # also tracks the encoder frame correctly even when self.heading
-            # (which tracks physical) diverges from it.
+            # the heading the most recent turn settled at.
             self._lockedCompass = self._initialCompass
         else:
             self._pid = None
@@ -412,38 +409,29 @@ class RoomFinch:
                                   assume_facing_wall=False):
         """Detect the angle of the wall on the robot's right and rotate to
         be parallel to it. Useful for correcting wheel-slip drift introduced
-        by 90-degree turns, and for avoiding the chassis-clipping problem
-        where the robot is angled enough that its corner contacts the wall
-        even though the front distance sensor reads clear ahead.
+        by 90-degree turns.
 
         Algorithm: take *symmetric* distance readings at +probe_angle_deg
         and -probe_angle_deg from perpendicular-right, and compute the wall
         angle from the asymmetry between them. Symmetric probing cancels
         the ultrasonic beam-cone bias that would otherwise make a single
-        tilted reading systematically short and produce a false β > 0
-        every time the wall is actually perpendicular.
+        tilted reading too short.
 
         Returns the corrected wall angle in degrees (signed, CCW-positive
         in the internal heading frame), or 0.0 if alignment was skipped.
 
-        Parameters
-        ----------
+        Parameters:
         probe_angle_deg : float
             Magnitude of the symmetric probe offsets from perpendicular.
             Larger gives more β sensitivity (signal scales as tan(θ)) but
             also more wheel-slip noise per call. 15-25° is sensible.
         max_correction_deg : float
             Cap on |computed wall angle|. Above this, alignment is skipped
-            (probably a misreading: glancing return, no wall, etc.).
         max_wall_distance_cm : float
             If R_perp > this, no wall is considered to be on the right
             and alignment is skipped.
         assume_facing_wall : bool
-            If True, the robot is already facing the wall (e.g. just
-            stopped via moveForwardUntilWall, or already turned right
-            inside checkRight). Skip the initial turnRight(90), saving
-            two turns. End state is "wall on right + parallel" in either
-            mode.
+            If True, the robot is already facing the wall
         """
         if not assume_facing_wall:
             self.turnRight(90)
@@ -533,6 +521,19 @@ class RoomFinch:
         if len(self.temperature_readings) == 0:
             return 0
         return sum(self.temperature_readings) / len(self.temperature_readings)  # Compute average temperature
+
+    def getCurrentTemperature(self):
+        """Return the latest temperature reading cached by the tail-updater
+        thread (which polls at TAIL_UPDATE_HZ for the LED ramp). Use this
+        for live telemetry — getAverageTemperature() only sees readings
+        appended by recordSensors(), which is invoked exclusively from
+        moveForward()."""
+        if self._latest_temp is not None:
+            return self._latest_temp
+        try:
+            return self._finch.getTemperature()
+        except Exception:
+            return 0
 
     def playBeep(self, note=60, duration=1):
         """Plays a beep sound with the given note and duration."""
